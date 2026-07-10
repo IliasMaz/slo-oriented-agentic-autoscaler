@@ -1,5 +1,8 @@
-prometheus-client
-kubernetes
-numpy
-scikit-learn
-pulp
+fastapi==0.115.0
+uvicorn==0.30.6
+requests==2.32.3
+prometheus-client==0.20.0
+kubernetes==30.1.0
+pydantic==2.9.2
+openai==1.51.2
+langgraph==0.2.28

@@ -1,11 +1,9 @@
-"""Entry point / loop (placeholder)."""
-
-from agents import observer
+"""Autoscaler entry point."""
 
 
-def main():
+def main() -> None:
     print("Autoscaler loop placeholder")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
