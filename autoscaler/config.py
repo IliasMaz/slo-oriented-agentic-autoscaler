@@ -41,8 +41,10 @@ POLL_INTERVAL_SECONDS = get_env_float("POLL_INTERVAL_SECONDS", 15) # seconds
 LATENCY_P95_THRESHOLD = get_env_float("LATENCY_P95_THRESHOLD", 0.4)  # seconds
 ERROR_RATE_THRESHOLD = get_env_float("ERROR_RATE_THRESHOLD", 0.05)  # 5%
 INPROGRESS_THRESHOLD = get_env_int("INPROGRESS_THRESHOLD", 8)  # number of in-progress requests
-REP_REPLICA_RPS_THRESHOLD = get_env_float("REP_REPLICA_RPS_THRESHOLD", 10.0)  # requests per second per replica
-PER_REPLICA_RPS_THRESHOLD = REP_REPLICA_RPS_THRESHOLD
+PER_REPLICA_RPS_THRESHOLD = get_env_float(
+    "PER_REPLICA_RPS_THRESHOLD",
+    get_env_float("REP_REPLICA_RPS_THRESHOLD", 10.0),
+)  # requests per second per replica
 
 SCALE_UP_STEP = get_env_int("SCALE_UP_STEP", 1)
 SCALE_DOWN_STEP = get_env_int("SCALE_DOWN_STEP", 1)
