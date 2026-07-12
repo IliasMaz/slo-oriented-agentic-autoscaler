@@ -4,7 +4,7 @@ import json
 from openai import OpenAI
 
 # Import configuration constants
-from .config import (
+from config import (
     ERROR_RATE_THRESHOLD,
     INPROGRESS_THRESHOLD,
     LATENCY_P95_THRESHOLD,
@@ -17,7 +17,7 @@ from .config import (
     PER_REPLICA_RPS_THRESHOLD,
 )
 
-from .models import MetricsSnapshot, AgentRecommendation
+from models import MetricsSnapshot, AgentRecommendation
 
 
 def clamp(value: int) -> int:

@@ -70,7 +70,7 @@ def control_loop():
         try:
             result = runner.run_once()
 
-            snapshot = result["snapshot"]
+            snapshot = result["metrics_snapshot"]
             final_decision = result["final_decision"]
 
             AUTOSCALER_OBSERVED_RPS.set(snapshot.rps)

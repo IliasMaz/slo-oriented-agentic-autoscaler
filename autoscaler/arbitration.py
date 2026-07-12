@@ -1,6 +1,6 @@
 """Decision arbitration placeholder."""
 
-from .config import (
+from config import (
     ACTION_EFFECT_DOWN,
     ACTION_EFFECT_HOLD,
     ACTION_EFFECT_UP,
@@ -20,7 +20,7 @@ from .config import (
     WEIGHT_THROUGHPUT,
 )
 
-from .models import (
+from models import (
     ActionScore,
     AgentRecommendation,
     AggregatedDecision,

@@ -1,4 +1,4 @@
-from .config import (
+from config import (
   ERROR_RATE_THRESHOLD,
   INPROGRESS_THRESHOLD,
   LATENCY_P95_THRESHOLD,
@@ -10,8 +10,8 @@ from .config import (
   SCALE_UP_STEP
 )
 
-from .models import MetricsSnapshot, AgentRecommendation
-from .openai_agent import openai_decision_agent
+from models import MetricsSnapshot, AgentRecommendation
+from openai_agent import openai_decision_agent
 
 def clamp(value: int) -> int:
     """Clamp the value between MIN_REPLICAS and MAX_REPLICAS."""

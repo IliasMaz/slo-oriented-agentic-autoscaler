@@ -1,10 +1,9 @@
 """Safety checks placeholder."""
 
 
-import math
 import time
 
-from .config import (
+from config import (
     ERROR_RATE_THRESHOLD,
     LATENCY_P95_THRESHOLD,
     MAX_REPLICAS,
@@ -14,13 +13,13 @@ from .config import (
     SCALE_UP_COOLDOWN_SECONDS,
     SCALE_UP_STEP,
 )
-from .models import (
+from models import (
     AggregatedDecision,
     FinalDecision,
     MetricsSnapshot,
     VetoRuleResult,
 )
-from .veto_policy import VetoPolicy
+from veto_policy import VetoPolicy
 
 class SafetyGate:
     def __init__(self):
@@ -36,7 +35,7 @@ class SafetyGate:
             stale_metrics_after_seconds=60,
         )
 
-    def _invalid_metrics(self,metrics: MetricsSnapshot) -> VetoPolicy:
+    def _invalid_metrics(self, metrics: MetricsSnapshot) -> VetoRuleResult:
         """Check if the metrics snapshot is invalid."""
         invalid = any(
             [
@@ -52,8 +51,13 @@ class SafetyGate:
 
         return VetoRuleResult(
             rule_name="invalid_metrics",
-            vetoed=invalid,
-            reason="Metrics snapshot contains invalid values." if invalid else "Metrics snapshot is valid.",
+            triggered=invalid,
+            severity="high",
+            reason=(
+                "metrics snapshot contains invalid values"
+                if invalid
+                else "metrics snapshot is valid"
+            ),
         )
 
     def _rule_high_latency_blocks_scale_down(self, metrics: MetricsSnapshot, decision: AggregatedDecision) -> VetoRuleResult:
@@ -132,10 +136,14 @@ class SafetyGate:
             ),
         )
 
-    def _rule_excessive_scale_up_step(self, decision: AggregatedDecision) -> VetoRuleResult:
+    def _rule_excessive_scale_up_step(
+        self,
+        metrics: MetricsSnapshot,
+        decision: AggregatedDecision,
+    ) -> VetoRuleResult:
         """Check if scale up step exceeds maximum allowed."""
         triggered = False
-        delta = decision.desired_replicas - decision.current_replicas
+        delta = decision.desired_replicas - metrics.current_replicas
 
         if decision.action == "scale_up" and delta > self.policy.max_scale_up_step:
             triggered = True
@@ -148,10 +156,9 @@ class SafetyGate:
             triggered=triggered,
             severity="medium",
             reason=(
-                f"Scale up step {decision.desired_replicas - decision.current_replicas} exceeds "
-                f"maximum allowed {self.policy.max_scale_up_step}"
+                f"scale step {delta} exceeds allowed policy limits"
                 if triggered
-                else "Scale up step is within allowed limits"
+                else "scale step is within allowed limits"
             ),
         )
 
@@ -163,7 +170,7 @@ class SafetyGate:
             self._rule_high_error_rate_blocks_scale_down(metrics, decision),
             self._rule_scale_up_cooldown(decision),
             self._rule_scale_down_cooldown(decision),
-            self._rule_excessive_scale_up_step(decision),
+            self._rule_excessive_scale_up_step(metrics, decision),
         ]
 
         return results

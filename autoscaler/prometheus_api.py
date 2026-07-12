@@ -3,8 +3,8 @@
 import time
 import requests
 
-from .config import PROMETHEUS_URL
-from .models import MetricsSnapshot
+from config import PROMETHEUS_URL
+from models import MetricsSnapshot
 
 def query_scalar(query: str) -> float:
     """Query Prometheus for a scalar value."""
