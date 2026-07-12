@@ -1,7 +1,14 @@
+# this is the Kubernetes service definition for Grafana.
+# It defines a Service resource that exposes the Grafana application running in the thesis-autoscaling namespace.
+# The service listens on port 3000 and forwards traffic to the target port 3000 of the pods selected by the label app: grafana.
+# This allows other components in the cluster to communicate with the Grafana
+# application using a stable DNS name and port, regardless of the underlying pod
+
 apiVersion: v1
 kind: Service
 metadata:
   name: grafana
+  namespace: thesis-autoscaling
 spec:
   selector:
     app: grafana

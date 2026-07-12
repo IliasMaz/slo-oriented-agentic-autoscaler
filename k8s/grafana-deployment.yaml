@@ -1,7 +1,12 @@
+# thIS is the Kubernetes deployment definition for Grafana.
+# It defines a Deployment resource that manages the lifecycle of the Grafana pods in the thesis-autoscaling namespace.
+# The deployment specifies the desired number of replicas, the container image to use
+
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: grafana
+  namespace: thesis-autoscaling
 spec:
   replicas: 1
   selector:
@@ -14,4 +19,28 @@ spec:
     spec:
       containers:
         - name: grafana
-          image: grafana/grafana:latest
+          image: grafana/grafana:11.1.4
+          ports:
+            - containerPort: 3000
+          env:
+            - name: GF_SECURITY_ADMIN_USER
+              value: "admin"
+            - name: GF_SECURITY_ADMIN_PASSWORD
+              value: "admin"
+          volumeMounts:
+            - name: datasource-volume
+              mountPath: /etc/grafana/provisioning/datasources
+            - name: dashboard-provider-volume
+              mountPath: /etc/grafana/provisioning/dashboards
+            - name: dashboard-volume
+              mountPath: /var/lib/grafana/dashboards
+      volumes:
+        - name: datasource-volume
+          configMap:
+            name: grafana-datasources
+        - name: dashboard-provider-volume
+          configMap:
+            name: grafana-dashboard-provider
+        - name: dashboard-volume
+          configMap:
+            name: grafana-dashboard
