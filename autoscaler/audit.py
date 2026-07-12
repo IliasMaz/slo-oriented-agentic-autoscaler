@@ -4,7 +4,7 @@
 import json
 import os
 
-from .config import AUDIT_LOG_PATH
+from config import AUDIT_LOG_PATH
 
 
 def write_audit_line(payload: dict):

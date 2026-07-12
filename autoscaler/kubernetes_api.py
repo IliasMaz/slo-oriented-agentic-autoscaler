@@ -2,10 +2,14 @@
 
 
 from kubernetes import client, config
+from kubernetes.config.config_exception import ConfigException
 
 def load_cluster_config() -> None:
     """Load Kubernetes cluster configuration."""
-    config.load_kube_config()
+    try:
+        config.load_incluster_config()
+    except ConfigException:
+        config.load_kube_config()
 
 def get_current_replicas(namespace: str, deployment: str) -> int:
     """Get the current number of replicas for a deployment."""

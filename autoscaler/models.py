@@ -24,9 +24,9 @@ class ActionScore(BaseModel):
     """A score for a potential action."""
     action: str
     desired_replicas: int
-    error_penalty: float
     latency_penalty: float
     error_penalty: float
+    saturation_penalty: float
     throughput_penalty: float
     cost_penalty: float
     disagreement_penalty: float
@@ -34,7 +34,7 @@ class ActionScore(BaseModel):
 
 class AggregatedDecision(BaseModel):
     """An aggregated decision from multiple agents."""
-    action: float
+    action: str
     desired_replicas: int
     reason: str
     scores: list[ActionScore] = []

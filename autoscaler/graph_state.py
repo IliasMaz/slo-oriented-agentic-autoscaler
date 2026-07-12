@@ -3,7 +3,7 @@ Every node reads from here what it needs and writes back only what it produced."
 
 from typing import TypedDict
 
-from .models import (
+from models import (
     AggregatedDecision,
     AgentRecommendation,
     FinalDecision,
@@ -11,7 +11,7 @@ from .models import (
     VetoRuleResult,
 )
 
-class AutoscalerState(TypedDict):
+class AutoscalerState(TypedDict, total=False):
     """The shared state of the autoscaler."""
 
   # step 1 fetch metrics from prometheus
@@ -33,4 +33,4 @@ class AutoscalerState(TypedDict):
     scaled: bool
 
   #step 6 audit log the decision
-    audit_payload: list[dict]
+    audit_payload: dict
