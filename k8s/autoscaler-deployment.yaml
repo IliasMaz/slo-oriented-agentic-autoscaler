@@ -1,17 +1,86 @@
+# This is the Kubernetes deployment definition for the agent-autoscaler service.
+# It defines a Deployment resource that manages the lifecycle of the autoscaler pods in the thesis-autoscaling namespace.
+# The deployment specifies the desired number of replicas, the container image to use, and environment variables
+
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: autoscaler
+  name: agent-autoscaler
+  namespace: thesis-autoscaling
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: autoscaler
+      app: agent-autoscaler
   template:
     metadata:
       labels:
-        app: autoscaler
+        app: agent-autoscaler
     spec:
+      serviceAccountName: autoscaler-sa
       containers:
-        - name: autoscaler
-          image: autoscaler:latest
+        - name: agent-autoscaler
+          image: agent-autoscaler:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8001
+          env:
+            - name: PROMETHEUS_URL
+              value: "http://prometheus:9090"
+            - name: TARGET_NAMESPACE
+              value: "thesis-autoscaling"
+            - name: TARGET_DEPLOYMENT
+              value: "demo-app"
+            - name: MIN_REPLICAS
+              value: "1"
+            - name: MAX_REPLICAS
+              value: "10"
+            - name: POLL_INTERVAL_SECONDS
+              value: "15"
+            - name: LATENCY_P95_THRESHOLD
+              value: "0.40"
+            - name: ERROR_RATE_THRESHOLD
+              value: "0.05"
+            - name: INPROGRESS_THRESHOLD
+              value: "8"
+            - name: PER_REPLICA_RPS_THRESHOLD
+              value: "15"
+            - name: SCALE_UP_STEP
+              value: "1"
+            - name: SCALE_DOWN_STEP
+              value: "1"
+            - name: SCALE_UP_COOLDOWN_SECONDS
+              value: "30"
+            - name: SCALE_DOWN_COOLDOWN_SECONDS
+              value: "120"
+            - name: AUDIT_LOG_PATH
+              value: "/tmp/autoscaler/audit.jsonl"
+            - name: OPENAI_AGENT_ENABLED
+              value: "true"
+            - name: OPENAI_MODEL
+              value: "gpt-5.4"
+            - name: OPENAI_TIMEOUT_SECONDS
+              value: "10"
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: openai-api-secret
+                  key: OPENAI_API_KEY
+            - name: WEIGHT_LATENCY
+              value: "0.30"
+            - name: WEIGHT_ERROR
+              value: "0.25"
+            - name: WEIGHT_SATURATION
+              value: "0.15"
+            - name: WEIGHT_THROUGHPUT
+              value: "0.15"
+            - name: WEIGHT_COST
+              value: "0.10"
+            - name: WEIGHT_AGENT_DISAGREEMENT
+              value: "0.20"
+            - name: ACTION_EFFECT_UP
+              value: "0.80"
+            - name: ACTION_EFFECT_HOLD
+              value: "1.00"
+            - name: ACTION_EFFECT_DOWN
+              value: "1.20"

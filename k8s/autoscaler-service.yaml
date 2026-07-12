@@ -1,10 +1,17 @@
+# This is the Kubernetes service definition for the agent-autoscaler service.
+# It defines a Service resource that exposes the autoscaler application running in the thesis-autoscaling namespace.
+# The service listens on port 8001 and forwards traffic to the target port 8001 of the pods selected by the label app: agent-autoscaler.
+# This allows other components in the cluster to communicate with the autoscaler application using a stable DNS name and port,
+# regardless of the underlying pod IP addresses.
+
 apiVersion: v1
 kind: Service
 metadata:
-  name: autoscaler
+  name: agent-autoscaler
+  namespace: thesis-autoscaling
 spec:
   selector:
-    app: autoscaler
+    app: agent-autoscaler
   ports:
-    - port: 80
-      targetPort: 8000
+    - port: 8001
+      targetPort: 8001

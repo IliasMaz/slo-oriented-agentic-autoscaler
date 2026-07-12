@@ -1,12 +1,38 @@
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
+# This is the Kubernetes RBAC (Role-Based Access Control) configuration for the autoscaler service.
+# It defines a ServiceAccount, Role, and RoleBinding that grant the autoscaler the necessary permissions
+# to interact with the Kubernetes API and manage the demo application deployment in the thesis-autoscaling namespace.
+#
+#
+
+apiVersion: v1
+kind: ServiceAccount
 metadata:
-  name: thesis-autoscaling-admin
+  name: autoscaler-sa
+  namespace: thesis-autoscaling
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: autoscaler-role
+  namespace: thesis-autoscaling
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments", "deployments/scale"]
+    verbs: ["get", "patch", "update"]
+  - apiGroups: [""]
+    resources: ["pods", "services", "endpoints"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: autoscaler-rolebinding
+  namespace: thesis-autoscaling
 subjects:
   - kind: ServiceAccount
-    name: default
+    name: autoscaler-sa
     namespace: thesis-autoscaling
 roleRef:
   apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: cluster-admin
+  kind: Role
+  name: autoscaler-role
