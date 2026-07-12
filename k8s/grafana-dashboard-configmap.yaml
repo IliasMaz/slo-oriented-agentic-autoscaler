@@ -1,7 +1,106 @@
+# This is the Kubernetes ConfigMap definition for the Grafana dashboard configuration.
+# It defines a ConfigMap resource that contains the JSON representation of the Grafana dashboard
+# for monitoring the autoscaling behavior of the demo application.
+
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: grafana-dashboard
+  namespace: thesis-autoscaling
 data:
-  dashboard.json: |
-    {}
+  autoscaling-dashboard.json: |
+    {
+      "annotations": { "list": [] },
+      "editable": true,
+      "panels": [
+        {
+          "type": "timeseries",
+          "title": "Request Rate",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+          "targets": [
+            {
+              "expr": "sum(rate(demo_app_requests_total[1m]))",
+              "legendFormat": "RPS"
+            }
+          ]
+        },
+        {
+          "type": "timeseries",
+          "title": "p95 Latency",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+          "targets": [
+            {
+              "expr": "histogram_quantile(0.95, sum(rate(demo_app_request_latency_seconds_bucket[1m])) by (le))",
+              "legendFormat": "p95"
+            }
+          ]
+        },
+        {
+          "type": "timeseries",
+          "title": "Error Rate",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+          "targets": [
+            {
+              "expr": "sum(rate(demo_app_requests_total{status_code=~\"5..\"}[1m])) / clamp_min(sum(rate(demo_app_requests_total[1m])), 1)",
+              "legendFormat": "error_rate"
+            }
+          ]
+        },
+        {
+          "type": "timeseries",
+          "title": "Replicas",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+          "targets": [
+            {
+              "expr": "sum(kube_deployment_status_replicas{deployment=\"demo-app\",namespace=\"thesis-autoscaling\"})",
+              "legendFormat": "replicas"
+            },
+            {
+              "expr": "autoscaler_current_desired_replicas",
+              "legendFormat": "desired"
+            }
+          ]
+        },
+        {
+          "type": "timeseries",
+          "title": "OpenAI Tokens (5m increase)",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+          "targets": [
+            {
+              "expr": "sum(increase(openai_agent_prompt_tokens_total[5m]))",
+              "legendFormat": "prompt_tokens"
+            },
+            {
+              "expr": "sum(increase(openai_agent_completion_tokens_total[5m]))",
+              "legendFormat": "completion_tokens"
+            },
+            {
+              "expr": "sum(increase(openai_agent_tokens_total[5m]))",
+              "legendFormat": "total_tokens"
+            }
+          ]
+        },
+        {
+          "type": "timeseries",
+          "title": "OpenAI Estimated Cost (USD)",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+          "targets": [
+            {
+              "expr": "sum(openai_agent_estimated_cost_usd_total)",
+              "legendFormat": "cumulative_usd"
+            },
+            {
+              "expr": "sum(increase(openai_agent_estimated_cost_usd_total[5m]))",
+              "legendFormat": "usd_last_5m"
+            }
+          ]
+        }
+      ],
+      "schemaVersion": 39,
+      "style": "dark",
+      "tags": ["autoscaling", "thesis"],
+      "templating": { "list": [] },
+      "time": { "from": "now-30m", "to": "now" },
+      "title": "Thesis Autoscaling Dashboard",
+      "version": 1
+    }

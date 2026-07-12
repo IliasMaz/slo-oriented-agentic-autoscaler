@@ -1,8 +1,28 @@
+# This is the Kubernetes ConfigMap definition for Prometheus configuration.
+
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: prometheus-config
+  namespace: thesis-autoscaling
 data:
   prometheus.yml: |
     global:
-      scrape_interval: 15s
+      scrape_interval: 5s
+
+    scrape_configs:
+      - job_name: prometheus
+        static_configs:
+          - targets: ["localhost:9090"]
+
+      - job_name: demo-app
+        static_configs:
+          - targets: ["demo-app:8000"]
+
+      - job_name: agent-autoscaler
+        static_configs:
+          - targets: ["agent-autoscaler:8001"]
+
+      - job_name: kube-state-metrics
+        static_configs:
+          - targets: ["kube-state-metrics.kube-system.svc.cluster.local:8080"]

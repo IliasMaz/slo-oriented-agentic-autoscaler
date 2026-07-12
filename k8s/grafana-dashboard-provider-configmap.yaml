@@ -1,7 +1,23 @@
+# This is the Kubernetes ConfigMap definition for Grafana dashboard provider configuration.
+# It defines a ConfigMap resource that contains the YAML representation of the Grafana dashboard provider
+# configuration for the thesis-autoscaling namespace. The provider configuration specifies the location
+# of the dashboards and their organization within Grafana. This allows Grafana to automatically discover
+# and load the dashboards from the specified path when it starts up.
+
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: grafana-dashboard-provider
+  namespace: thesis-autoscaling
 data:
-  provider.yaml: |
+  dashboards.yaml: |
     apiVersion: 1
+    providers:
+      - name: default
+        orgId: 1
+        folder: Thesis
+        type: file
+        disableDeletion: false
+        editable: true
+        options:
+          path: /var/lib/grafana/dashboards
