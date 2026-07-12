@@ -1,3 +1,6 @@
+# This is the Kubernetes namespace definition for the thesis-autoscaling project.
+# It defines a Namespace resource that creates an isolated environment for all the resources related to the autoscaler and demo application.
+
 apiVersion: v1
 kind: Namespace
 metadata:
