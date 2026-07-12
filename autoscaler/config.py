@@ -54,12 +54,21 @@ SCALE_DOWN_COOLDOWN_SECONDS = get_env_float("SCALE_DOWN_COOLDOWN_SECONDS", 120) 
 
 # Audit log path
 AUDIT_LOG_PATH = get_env("AUDIT_LOG_PATH", "/tmp/autoscaler_audit.jsonl")
+AUDIT_DB_BACKEND = get_env("AUDIT_DB_BACKEND", "sqlite").lower()
+AUDIT_DB_PATH = get_env("AUDIT_DB_PATH", "/tmp/autoscaler/audit.db")
+AUDIT_DB_HOST = get_env("AUDIT_DB_HOST", "localhost")
+AUDIT_DB_PORT = get_env_int("AUDIT_DB_PORT", 5432)
+AUDIT_DB_NAME = get_env("AUDIT_DB_NAME", "autoscaler")
+AUDIT_DB_USER = get_env("AUDIT_DB_USER", "autoscaler")
+AUDIT_DB_PASSWORD = get_env("AUDIT_DB_PASSWORD", "autoscaler")
 
 # OpenAI API configuration
 OPENAI_API_KEY = get_env("OPENAI_API_KEY", "")
 OPENAI_MODEL = get_env("OPENAI_MODEL", "gpt-5")
 OPENAI_AGENT_ENABLED = get_env("OPENAI_AGENT_ENABLED", "false").lower() == "true" # This is a boolean flag to enable or disable the OpenAI agent. It defaults to false if not set.
 OPENAI_TIMEOUT_SECONDS = get_env_float("OPENAI_TIMEOUT_SECONDS", 10.0)  # seconds
+OPENAI_INPUT_COST_PER_1M_TOKENS = get_env_float("OPENAI_INPUT_COST_PER_1M_TOKENS", 0.0)
+OPENAI_OUTPUT_COST_PER_1M_TOKENS = get_env_float("OPENAI_OUTPUT_COST_PER_1M_TOKENS", 0.0)
 
 # Weighting factors for the scoring function
 WEIGHT_LATENCY = get_env_float("WEIGHT_LATENCY", 0.3) #This is the weight for the latency metric.

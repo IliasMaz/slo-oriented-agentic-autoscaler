@@ -2,6 +2,7 @@
 
 import json
 from openai import OpenAI
+from prometheus_client import Counter
 
 # Import configuration constants
 from config import (
@@ -12,7 +13,9 @@ from config import (
     MIN_REPLICAS,
     OPENAI_AGENT_ENABLED,
     OPENAI_API_KEY,
+    OPENAI_INPUT_COST_PER_1M_TOKENS,
     OPENAI_MODEL,
+    OPENAI_OUTPUT_COST_PER_1M_TOKENS,
     OPENAI_TIMEOUT_SECONDS,
     PER_REPLICA_RPS_THRESHOLD,
 )
@@ -20,9 +23,115 @@ from config import (
 from models import MetricsSnapshot, AgentRecommendation
 
 
+OPENAI_AGENT_REQUESTS_TOTAL = Counter(
+    "openai_agent_requests_total",
+    "Total OpenAI agent calls grouped by outcome",
+    ["result"],
+)
+
+OPENAI_AGENT_PROMPT_TOKENS_TOTAL = Counter(
+    "openai_agent_prompt_tokens_total",
+    "Total prompt/input tokens consumed by OpenAI agent",
+)
+
+OPENAI_AGENT_COMPLETION_TOKENS_TOTAL = Counter(
+    "openai_agent_completion_tokens_total",
+    "Total completion/output tokens consumed by OpenAI agent",
+)
+
+OPENAI_AGENT_TOKENS_TOTAL = Counter(
+    "openai_agent_tokens_total",
+    "Total tokens consumed by OpenAI agent",
+)
+
+OPENAI_AGENT_ESTIMATED_COST_USD_TOTAL = Counter(
+    "openai_agent_estimated_cost_usd_total",
+    "Estimated cumulative OpenAI API cost in USD",
+)
+
+
 def clamp(value: int) -> int:
     """Clamp the value between MIN_REPLICAS and MAX_REPLICAS."""
     return max(MIN_REPLICAS, min(MAX_REPLICAS, value))
+
+
+def _coerce_int(value) -> int:
+    """Convert a value to int safely."""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _extract_usage_tokens(response) -> tuple[int, int, int]:
+    """Extract prompt, completion, total token counts from OpenAI response."""
+    usage = getattr(response, "usage", None)
+    if usage is None and isinstance(response, dict):
+        usage = response.get("usage")
+
+    if usage is None:
+        return 0, 0, 0
+
+    if isinstance(usage, dict):
+        prompt_tokens = _coerce_int(
+            usage.get("input_tokens", usage.get("prompt_tokens", 0))
+        )
+        completion_tokens = _coerce_int(
+            usage.get("output_tokens", usage.get("completion_tokens", 0))
+        )
+        total_tokens = _coerce_int(usage.get("total_tokens", 0))
+    else:
+        prompt_tokens = _coerce_int(
+            getattr(usage, "input_tokens", getattr(usage, "prompt_tokens", 0))
+        )
+        completion_tokens = _coerce_int(
+            getattr(usage, "output_tokens", getattr(usage, "completion_tokens", 0))
+        )
+        total_tokens = _coerce_int(getattr(usage, "total_tokens", 0))
+
+    if total_tokens <= 0:
+        total_tokens = prompt_tokens + completion_tokens
+
+    return prompt_tokens, completion_tokens, total_tokens
+
+
+def _record_usage_metrics(response) -> None:
+    """Record token and estimated cost metrics from the OpenAI response."""
+    prompt_tokens, completion_tokens, total_tokens = _extract_usage_tokens(response)
+
+    if prompt_tokens > 0:
+        OPENAI_AGENT_PROMPT_TOKENS_TOTAL.inc(prompt_tokens)
+
+    if completion_tokens > 0:
+        OPENAI_AGENT_COMPLETION_TOKENS_TOTAL.inc(completion_tokens)
+
+    if total_tokens > 0:
+        OPENAI_AGENT_TOKENS_TOTAL.inc(total_tokens)
+
+    estimated_cost_usd = (
+        (prompt_tokens / 1_000_000.0) * OPENAI_INPUT_COST_PER_1M_TOKENS
+        + (completion_tokens / 1_000_000.0) * OPENAI_OUTPUT_COST_PER_1M_TOKENS
+    )
+    if estimated_cost_usd > 0:
+        OPENAI_AGENT_ESTIMATED_COST_USD_TOTAL.inc(estimated_cost_usd)
+
+
+def _extract_output_text(response) -> str:
+    """Extract model text from either responses API or chat.completions API."""
+    output_text = getattr(response, "output_text", None)
+    if output_text:
+        return str(output_text).strip()
+
+    choices = getattr(response, "choices", None)
+    if choices:
+        first_choice = choices[0]
+        message = getattr(first_choice, "message", None)
+        if message is not None:
+            content = getattr(message, "content", None)
+            if isinstance(content, str):
+                return content.strip()
+
+    return ""
 
 
 def build_prompt(metrics: MetricsSnapshot) -> str:
@@ -121,20 +230,37 @@ def fallback(metrics: MetricsSnapshot, reason: str) -> AgentRecommendation:
 def openai_decision_agent(metrics: MetricsSnapshot) -> AgentRecommendation:
     """Get a decision from the OpenAI agent based on the metrics snapshot."""
     if not OPENAI_AGENT_ENABLED:
+        OPENAI_AGENT_REQUESTS_TOTAL.labels(result="disabled").inc()
         return fallback(metrics, "OpenAI agent is disabled.")
 
     if not OPENAI_API_KEY:
+        OPENAI_AGENT_REQUESTS_TOTAL.labels(result="missing_key").inc()
         return fallback(metrics, "OpenAI API key is not configured.")
 
     try:
         client = OpenAI(api_key=OPENAI_API_KEY, timeout=OPENAI_TIMEOUT_SECONDS)
 
-        response = client.responses.create(
-            model=OPENAI_MODEL,
-            input=build_prompt(metrics),
-        )
+        prompt = build_prompt(metrics)
+        if hasattr(client, "responses"):
+            response = client.responses.create(
+                model=OPENAI_MODEL,
+                input=prompt,
+            )
+        else:
+            response = client.chat.completions.create(
+                model=OPENAI_MODEL,
+                messages=[{"role": "user", "content": prompt}],
+                response_format={"type": "json_object"},
+            )
 
-        content = response.output_text.strip()
+        _record_usage_metrics(response)
+        OPENAI_AGENT_REQUESTS_TOTAL.labels(result="success").inc()
+
+        content = _extract_output_text(response)
+        if not content:
+            return fallback(metrics, "OpenAI agent returned empty content.")
+
         return parse_response(content, metrics.current_replicas)
     except Exception as e:
+        OPENAI_AGENT_REQUESTS_TOTAL.labels(result="error").inc()
         return fallback(metrics, f"OpenAI agent error: {str(e)}")
