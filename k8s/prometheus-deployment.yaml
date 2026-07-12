@@ -1,7 +1,12 @@
+# This is the Kubernetes deployment definition for Prometheus.
+# It defines a Deployment resource that manages the lifecycle of the Prometheus pods in the
+# thesis-autoscaling namespace.
+
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: prometheus
+  namespace: thesis-autoscaling
 spec:
   replicas: 1
   selector:
@@ -14,4 +19,15 @@ spec:
     spec:
       containers:
         - name: prometheus
-          image: prom/prometheus:latest
+          image: prom/prometheus:v2.54.1
+          args:
+            - --config.file=/etc/prometheus/prometheus.yml
+          ports:
+            - containerPort: 9090
+          volumeMounts:
+            - name: config-volume
+              mountPath: /etc/prometheus
+      volumes:
+        - name: config-volume
+          configMap:
+            name: prometheus-config

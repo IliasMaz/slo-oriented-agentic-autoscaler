@@ -1,7 +1,13 @@
+# This is the Kubernetes service definition for Prometheus.
+# It defines a Service resource that exposes the Prometheus application running in the thesis-autoscaling namespace.
+# The service listens on port 9090 and forwards traffic to the target port 9090 of the pods selected by the label app: prometheus.
+# This allows other components in the cluster to communicate with the Prometheus application using a stable DNS name and port, regardless of the underlying pod IP addresses.
+
 apiVersion: v1
 kind: Service
 metadata:
   name: prometheus
+  namespace: thesis-autoscaling
 spec:
   selector:
     app: prometheus
