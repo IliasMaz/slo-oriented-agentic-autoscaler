@@ -30,6 +30,10 @@ ENV/
 # Generated experiment outputs
 results/*
 !results/.gitkeep
+!results/*.md
 
 # Misc logs
 *.log
+
+# Local notes
+*.local.md
