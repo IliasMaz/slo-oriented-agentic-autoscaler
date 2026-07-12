@@ -1,9 +1,16 @@
+# This is the Kubernetes deployment definition for the demo application. It defines a Deployment resource that manages the lifecycle of the demo application pods in the thesis-autoscaling namespace.
+# The deployment specifies the desired number of replicas, the container image to use, resource requests and limits, and environment
+# variables that control the behavior of the application.
+# The deployment ensures that the specified number of replicas are running and automatically replaces any failed
+# or terminated pods to maintain the desired state.
+
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: demo-app
+  namespace: thesis-autoscaling
 spec:
-  replicas: 1
+  replicas: 2
   selector:
     matchLabels:
       app: demo-app
@@ -15,3 +22,24 @@ spec:
       containers:
         - name: demo-app
           image: demo-app:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8000
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          env:
+            - name: BASE_DELAY_MS
+              value: "50"
+            - name: SPIKE_DELAY_MS
+              value: "700"
+            - name: SPIKE_PROBABILITY
+              value: "0.15"
+            - name: ERROR_PROBABILITY
+              value: "0.03"
+            - name: CPU_BURN_ITERS
+              value: "150000"

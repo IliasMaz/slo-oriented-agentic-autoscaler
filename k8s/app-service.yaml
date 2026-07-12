@@ -1,10 +1,15 @@
+# This is the Kubernetes service definition for the demo application. It defines a Service resource that exposes the demo application running in the thesis-autoscaling namespace.
+# The service listens on port 8000 and forwards traffic to the target port 8000 of the pods selected by the label app: demo-app.
+# This allows other components in the cluster to communicate with the demo application using a stable DNS name and port, regardless of the underlying pod IP addresses.
+
 apiVersion: v1
 kind: Service
 metadata:
   name: demo-app
+  namespace: thesis-autoscaling
 spec:
   selector:
     app: demo-app
   ports:
-    - port: 80
-      targetPort: 8080
+    - port: 8000
+      targetPort: 8000
