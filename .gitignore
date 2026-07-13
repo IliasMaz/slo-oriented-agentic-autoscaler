@@ -31,22 +31,6 @@ ENV/
 results/*
 !results/.gitkeep
 
-# Generated markdown reports and runbooks
-reports/*
-!reports/.gitkeep
-!reports/dbeaver_postgres_sidecar_setup.md
-!reports/how_it_works_a_to_omega.md
-!reports/latest_validation_report.md
-!reports/latest_validation_report_v2.md
-!reports/explainability_timeline_latest.md
-!reports/security_and_kos_report.md
-!reports/load_test_sawtooth_report.md
-!reports/load_test_spike_report.md
-!reports/phase1_todos_completion.md
-
-# Keep repository entry docs always visible
-!README.md
-
 # Misc logs
 *.log
 
