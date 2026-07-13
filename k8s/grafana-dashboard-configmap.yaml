@@ -1,3 +1,4 @@
+# Layer: observability/visualization dashboards.
 # This is the Kubernetes ConfigMap definition for the Grafana dashboard configuration.
 # It defines a ConfigMap resource that contains the JSON representation of the Grafana dashboard
 # for monitoring the autoscaling behavior of the demo application.
@@ -92,6 +93,28 @@ data:
             {
               "expr": "sum(increase(openai_agent_estimated_cost_usd_total[5m]))",
               "legendFormat": "usd_last_5m"
+            }
+          ]
+        },
+        {
+          "type": "timeseries",
+          "title": "OpenAI Request Outcomes (5m increase)",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 24 },
+          "targets": [
+            {
+              "expr": "sum by (result) (increase(openai_agent_requests_total[5m]))",
+              "legendFormat": "{{result}}"
+            }
+          ]
+        },
+        {
+          "type": "timeseries",
+          "title": "Vetoed Decisions (5m increase)",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 24 },
+          "targets": [
+            {
+              "expr": "increase(autoscaler_decisions_total{veto=\"true\"}[5m])",
+              "legendFormat": "vetoed_decisions"
             }
           ]
         }

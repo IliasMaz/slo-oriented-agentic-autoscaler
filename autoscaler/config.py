@@ -1,4 +1,4 @@
-"""Configuration placeholders for the autoscaler."""
+"""Layer: config - central environment-driven runtime settings for the autoscaler."""
 
 import os
 
@@ -51,6 +51,9 @@ SCALE_DOWN_STEP = get_env_int("SCALE_DOWN_STEP", 1)
 
 SCALE_UP_COOLDOWN_SECONDS = get_env_float("SCALE_UP_COOLDOWN_SECONDS", 30)  # seconds
 SCALE_DOWN_COOLDOWN_SECONDS = get_env_float("SCALE_DOWN_COOLDOWN_SECONDS", 120)  # seconds
+MIN_SCALE_ACTION_INTERVAL_SECONDS = get_env_float("MIN_SCALE_ACTION_INTERVAL_SECONDS", 20)  # seconds
+SCALE_DIRECTION_CHANGE_COOLDOWN_SECONDS = get_env_float("SCALE_DIRECTION_CHANGE_COOLDOWN_SECONDS", 90)  # seconds
+SCALE_DOWN_RELEASE_MARGIN = get_env_float("SCALE_DOWN_RELEASE_MARGIN", 0.85)
 
 # Audit log path
 AUDIT_LOG_PATH = get_env("AUDIT_LOG_PATH", "/tmp/autoscaler_audit.jsonl")
@@ -69,6 +72,8 @@ OPENAI_AGENT_ENABLED = get_env("OPENAI_AGENT_ENABLED", "false").lower() == "true
 OPENAI_TIMEOUT_SECONDS = get_env_float("OPENAI_TIMEOUT_SECONDS", 10.0)  # seconds
 OPENAI_INPUT_COST_PER_1M_TOKENS = get_env_float("OPENAI_INPUT_COST_PER_1M_TOKENS", 0.0)
 OPENAI_OUTPUT_COST_PER_1M_TOKENS = get_env_float("OPENAI_OUTPUT_COST_PER_1M_TOKENS", 0.0)
+OPENAI_MAX_TOTAL_COST_USD = get_env_float("OPENAI_MAX_TOTAL_COST_USD", 0.0)
+OPENAI_MAX_TOTAL_TOKENS = get_env_int("OPENAI_MAX_TOTAL_TOKENS", 0)
 
 # Weighting factors for the scoring function
 WEIGHT_LATENCY = get_env_float("WEIGHT_LATENCY", 0.3) #This is the weight for the latency metric.

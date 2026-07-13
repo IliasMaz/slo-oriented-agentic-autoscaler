@@ -1,14 +1,19 @@
-"""Safety checks placeholder."""
+"""Layer: safety-policy - veto and anti-thrashing checks before scale actuation."""
 
 
 import time
 
 from config import (
     ERROR_RATE_THRESHOLD,
+    INPROGRESS_THRESHOLD,
     LATENCY_P95_THRESHOLD,
     MAX_REPLICAS,
     MIN_REPLICAS,
+    MIN_SCALE_ACTION_INTERVAL_SECONDS,
+    PER_REPLICA_RPS_THRESHOLD,
     SCALE_DOWN_COOLDOWN_SECONDS,
+    SCALE_DIRECTION_CHANGE_COOLDOWN_SECONDS,
+    SCALE_DOWN_RELEASE_MARGIN,
     SCALE_DOWN_STEP,
     SCALE_UP_COOLDOWN_SECONDS,
     SCALE_UP_STEP,
@@ -25,15 +30,26 @@ class SafetyGate:
     def __init__(self):
         self.last_scale_up_at = 0.0
         self.last_scale_down_at = 0.0
+        self.last_scale_action_at = 0.0
+        self.last_scale_action = "hold"
         self.policy = VetoPolicy(
             latency_p95_threshold=LATENCY_P95_THRESHOLD,
             error_rate_threshold=ERROR_RATE_THRESHOLD,
+            inprogress_threshold=INPROGRESS_THRESHOLD,
+            per_replica_rps_threshold=PER_REPLICA_RPS_THRESHOLD,
             max_scale_up_step=SCALE_UP_STEP,
             max_scale_down_step=SCALE_DOWN_STEP,
             scale_up_cooldown_seconds=SCALE_UP_COOLDOWN_SECONDS,
             scale_down_cooldown_seconds=SCALE_DOWN_COOLDOWN_SECONDS,
+            min_scale_action_interval_seconds=MIN_SCALE_ACTION_INTERVAL_SECONDS,
+            scale_direction_change_cooldown_seconds=SCALE_DIRECTION_CHANGE_COOLDOWN_SECONDS,
+            scale_down_release_margin=SCALE_DOWN_RELEASE_MARGIN,
             stale_metrics_after_seconds=60,
         )
+
+    @staticmethod
+    def _is_scale_action(action: str) -> bool:
+        return action in {"scale_up", "scale_down"}
 
     def _invalid_metrics(self, metrics: MetricsSnapshot) -> VetoRuleResult:
         """Check if the metrics snapshot is invalid."""
@@ -136,6 +152,67 @@ class SafetyGate:
             ),
         )
 
+    def _rule_min_scale_action_interval(self, decision: AggregatedDecision) -> VetoRuleResult:
+        triggered = (
+            self._is_scale_action(decision.action)
+            and (time.time() - self.last_scale_action_at) < self.policy.min_scale_action_interval_seconds
+        )
+
+        return VetoRuleResult(
+            rule_name="min_scale_action_interval",
+            triggered=triggered,
+            severity="medium",
+            reason=(
+                f"scale action is within min interval of {self.policy.min_scale_action_interval_seconds}s"
+                if triggered
+                else "scale action interval is satisfied"
+            ),
+        )
+
+    def _rule_scale_direction_change_cooldown(self, decision: AggregatedDecision) -> VetoRuleResult:
+        opposite_direction = (
+            self._is_scale_action(decision.action)
+            and self._is_scale_action(self.last_scale_action)
+            and decision.action != self.last_scale_action
+        )
+        triggered = (
+            opposite_direction
+            and (time.time() - self.last_scale_action_at) < self.policy.scale_direction_change_cooldown_seconds
+        )
+
+        return VetoRuleResult(
+            rule_name="scale_direction_change_cooldown",
+            triggered=triggered,
+            severity="medium",
+            reason=(
+                f"opposite scale direction is blocked for {self.policy.scale_direction_change_cooldown_seconds}s"
+                if triggered
+                else "scale direction change is allowed"
+            ),
+        )
+
+    def _rule_scale_down_hysteresis(self, metrics: MetricsSnapshot, decision: AggregatedDecision) -> VetoRuleResult:
+        per_replica_rps = metrics.rps / max(metrics.current_replicas, 1)
+        release = self.policy.scale_down_release_margin
+        safe_to_scale_down = (
+            metrics.p95_latency <= self.policy.latency_p95_threshold * release
+            and metrics.error_rate <= self.policy.error_rate_threshold * release
+            and metrics.inprogress <= int(self.policy.inprogress_threshold * release)
+            and per_replica_rps <= self.policy.per_replica_rps_threshold * release
+        )
+        triggered = decision.action == "scale_down" and not safe_to_scale_down
+
+        return VetoRuleResult(
+            rule_name="scale_down_hysteresis",
+            triggered=triggered,
+            severity="medium",
+            reason=(
+                f"scale_down blocked until metrics are below {release:.2f} release margin"
+                if triggered
+                else "scale_down release margin is satisfied"
+            ),
+        )
+
     def _rule_excessive_scale_up_step(
         self,
         metrics: MetricsSnapshot,
@@ -170,6 +247,9 @@ class SafetyGate:
             self._rule_high_error_rate_blocks_scale_down(metrics, decision),
             self._rule_scale_up_cooldown(decision),
             self._rule_scale_down_cooldown(decision),
+            self._rule_min_scale_action_interval(decision),
+            self._rule_scale_direction_change_cooldown(decision),
+            self._rule_scale_down_hysteresis(metrics, decision),
             self._rule_excessive_scale_up_step(metrics, decision),
         ]
 
@@ -199,8 +279,12 @@ class SafetyGate:
         now = time.time()
         if decision.action == "scale_up":
             self.last_scale_up_at = now
+            self.last_scale_action_at = now
+            self.last_scale_action = "scale_up"
         elif decision.action == "scale_down":
             self.last_scale_down_at = now
+            self.last_scale_action_at = now
+            self.last_scale_action = "scale_down"
 
         return (
             FinalDecision(

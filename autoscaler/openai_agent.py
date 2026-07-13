@@ -1,4 +1,4 @@
-"""OpenAI agent wrapper placeholder."""
+"""Layer: decision-augmentation - OpenAI recommendation adapter with budget telemetry."""
 
 import json
 from openai import OpenAI
@@ -14,6 +14,8 @@ from config import (
     OPENAI_AGENT_ENABLED,
     OPENAI_API_KEY,
     OPENAI_INPUT_COST_PER_1M_TOKENS,
+    OPENAI_MAX_TOTAL_COST_USD,
+    OPENAI_MAX_TOTAL_TOKENS,
     OPENAI_MODEL,
     OPENAI_OUTPUT_COST_PER_1M_TOKENS,
     OPENAI_TIMEOUT_SECONDS,
@@ -48,6 +50,10 @@ OPENAI_AGENT_ESTIMATED_COST_USD_TOTAL = Counter(
     "openai_agent_estimated_cost_usd_total",
     "Estimated cumulative OpenAI API cost in USD",
 )
+
+
+_OPENAI_ESTIMATED_COST_ACCUM_USD = 0.0
+_OPENAI_TOTAL_TOKENS_ACCUM = 0
 
 
 def clamp(value: int) -> int:
@@ -97,6 +103,8 @@ def _extract_usage_tokens(response) -> tuple[int, int, int]:
 
 def _record_usage_metrics(response) -> None:
     """Record token and estimated cost metrics from the OpenAI response."""
+    global _OPENAI_ESTIMATED_COST_ACCUM_USD, _OPENAI_TOTAL_TOKENS_ACCUM
+
     prompt_tokens, completion_tokens, total_tokens = _extract_usage_tokens(response)
 
     if prompt_tokens > 0:
@@ -107,6 +115,7 @@ def _record_usage_metrics(response) -> None:
 
     if total_tokens > 0:
         OPENAI_AGENT_TOKENS_TOTAL.inc(total_tokens)
+        _OPENAI_TOTAL_TOKENS_ACCUM += total_tokens
 
     estimated_cost_usd = (
         (prompt_tokens / 1_000_000.0) * OPENAI_INPUT_COST_PER_1M_TOKENS
@@ -114,6 +123,24 @@ def _record_usage_metrics(response) -> None:
     )
     if estimated_cost_usd > 0:
         OPENAI_AGENT_ESTIMATED_COST_USD_TOTAL.inc(estimated_cost_usd)
+        _OPENAI_ESTIMATED_COST_ACCUM_USD += estimated_cost_usd
+
+
+def _budget_exceeded() -> tuple[bool, str]:
+    """Check if runtime OpenAI spending/token caps were exceeded."""
+    if OPENAI_MAX_TOTAL_COST_USD > 0 and _OPENAI_ESTIMATED_COST_ACCUM_USD >= OPENAI_MAX_TOTAL_COST_USD:
+        return True, (
+            f"OpenAI estimated cost cap reached: {_OPENAI_ESTIMATED_COST_ACCUM_USD:.6f} "
+            f">= {OPENAI_MAX_TOTAL_COST_USD:.6f} USD"
+        )
+
+    if OPENAI_MAX_TOTAL_TOKENS > 0 and _OPENAI_TOTAL_TOKENS_ACCUM >= OPENAI_MAX_TOTAL_TOKENS:
+        return True, (
+            f"OpenAI token cap reached: {_OPENAI_TOTAL_TOKENS_ACCUM} "
+            f">= {OPENAI_MAX_TOTAL_TOKENS} tokens"
+        )
+
+    return False, ""
 
 
 def _extract_output_text(response) -> str:
@@ -236,6 +263,11 @@ def openai_decision_agent(metrics: MetricsSnapshot) -> AgentRecommendation:
     if not OPENAI_API_KEY:
         OPENAI_AGENT_REQUESTS_TOTAL.labels(result="missing_key").inc()
         return fallback(metrics, "OpenAI API key is not configured.")
+
+    exceeded, reason = _budget_exceeded()
+    if exceeded:
+        OPENAI_AGENT_REQUESTS_TOTAL.labels(result="budget_exceeded").inc()
+        return fallback(metrics, reason)
 
     try:
         client = OpenAI(api_key=OPENAI_API_KEY, timeout=OPENAI_TIMEOUT_SECONDS)
