@@ -1,4 +1,6 @@
-# Layer: runtime/deployment for autoscaler + audit-db sidecar.
+# Layer: runtime/deployment.
+# Defines autoscaler workload
+# and the audit-db sidecar.
 # This is the Kubernetes deployment definition for the agent-autoscaler service.
 # It defines a Deployment resource that manages the lifecycle of the autoscaler pods in the thesis-autoscaling namespace.
 # The deployment specifies the desired number of replicas, the container image to use, and environment variables

@@ -1,4 +1,7 @@
-"""Layer: analysis/orchestration - run the full High-ROI Phase-1 tooling pipeline."""
+"""Layer: analysis/orchestration.
+Runs the full High-ROI
+Phase-1 tooling pipeline.
+"""
 
 import argparse
 import json

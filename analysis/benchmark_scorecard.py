@@ -1,4 +1,7 @@
-"""Layer: analysis/reporting - baseline benchmark scorecard from k6 summary exports."""
+"""Layer: analysis/reporting.
+Builds a baseline scorecard
+from k6 summary exports.
+"""
 
 import argparse
 import json

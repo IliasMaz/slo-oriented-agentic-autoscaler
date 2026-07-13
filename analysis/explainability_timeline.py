@@ -1,4 +1,7 @@
-"""Layer: analysis/explainability - generate a readable decision timeline from audit data."""
+"""Layer: analysis/explainability.
+Generates a readable decision timeline
+from autoscaler audit data.
+"""
 
 import argparse
 import json

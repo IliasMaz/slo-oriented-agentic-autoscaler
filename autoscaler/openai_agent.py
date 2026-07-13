@@ -1,4 +1,7 @@
-"""Layer: decision-augmentation - OpenAI recommendation adapter with budget telemetry."""
+"""Layer: decision-augmentation.
+OpenAI recommendation adapter
+with budget telemetry.
+"""
 
 import json
 from openai import OpenAI

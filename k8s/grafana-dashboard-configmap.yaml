@@ -1,4 +1,6 @@
-# Layer: observability/visualization dashboards.
+# Layer: observability/visualization.
+# Defines dashboard configuration
+# for Grafana panels.
 # This is the Kubernetes ConfigMap definition for the Grafana dashboard configuration.
 # It defines a ConfigMap resource that contains the JSON representation of the Grafana dashboard
 # for monitoring the autoscaling behavior of the demo application.

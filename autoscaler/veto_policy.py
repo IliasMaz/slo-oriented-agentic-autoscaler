@@ -1,4 +1,7 @@
-"""Layer: policy-schema - typed thresholds/cooldowns consumed by the safety gate."""
+"""Layer: policy-schema.
+Defines typed thresholds and cooldowns
+used by the safety gate.
+"""
 
 from pydantic import BaseModel
 

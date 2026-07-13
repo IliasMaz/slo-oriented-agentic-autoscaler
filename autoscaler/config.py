@@ -1,4 +1,7 @@
-"""Layer: config - central environment-driven runtime settings for the autoscaler."""
+"""Layer: config.
+Holds central environment-driven
+runtime settings for the autoscaler.
+"""
 
 import os
 

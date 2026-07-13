@@ -1,4 +1,7 @@
-"""Layer: safety-policy - veto and anti-thrashing checks before scale actuation."""
+"""Layer: safety-policy.
+Applies veto and anti-thrashing checks
+before scale actuation.
+"""
 
 
 import time

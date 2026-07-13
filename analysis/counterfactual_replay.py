@@ -1,4 +1,7 @@
-"""Layer: analysis/simulation - counterfactual replay using stored audit payloads."""
+"""Layer: analysis/simulation.
+Replays counterfactual decisions
+from stored audit payloads.
+"""
 
 import argparse
 import json

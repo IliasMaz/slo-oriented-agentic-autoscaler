@@ -1,7 +1,9 @@
 import http from "k6/http";
 import { check, sleep } from "k6";
 
-// Layer: load generation profile used for end-to-end autoscaler stress testing.
+// Layer: load generation.
+// Used for end-to-end
+// autoscaler stress testing.
 // Reality simulation profile:
 // Emulates a day-like traffic pattern with warmup, peak, plateau, burst, and cooldown.
 // Includes a small health-check percentage and variable think time.

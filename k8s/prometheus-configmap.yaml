@@ -1,4 +1,6 @@
-# Layer: observability/metrics + alerting rules.
+# Layer: observability/metrics.
+# Defines scrape config
+# and alerting rules.
 # This is the Kubernetes ConfigMap definition for Prometheus configuration.
 
 apiVersion: v1
