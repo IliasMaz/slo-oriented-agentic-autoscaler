@@ -7,6 +7,71 @@ Agent-based autoscaler for Kubernetes with:
 - Prometheus/Grafana observability
 - audit persistence (JSONL + DB backend)
 
+## Problem This Project Solves
+
+Most autoscaling setups rely on simple threshold rules (for example: CPU > X% => scale up).
+That approach often fails in real workloads because:
+
+- latency can degrade before CPU rises enough,
+- error rate can spike briefly and then disappear,
+- load can be bursty and trigger oscillation (scale up, then immediate scale down),
+- cost can increase without improving user experience.
+
+This project addresses that gap with a decision pipeline that is:
+
+- multi-signal (latency, errors, throughput, saturation, optional LLM recommendation),
+- safety-constrained (cooldowns, hysteresis, veto rules),
+- fully observable (Prometheus + Grafana),
+- explainable after the fact (audit payloads + timeline + replay).
+
+In short: it aims to keep SLO behavior stable while avoiding unnecessary replica and API spend.
+
+## How The Tech Stack Fits Together
+
+The stack is split into cooperating layers, each with a clear role.
+
+### 1) Workload Layer
+
+- `app/` serves traffic and exports app metrics (`/metrics`).
+- `load/` contains k6 profiles that generate realistic or stress traffic patterns.
+
+### 2) Decision Layer
+
+- `autoscaler/` runs the control loop.
+- Agent recommendations are produced for latency, error, throughput, saturation, and optionally OpenAI.
+- Arbitration chooses the minimum-penalty action candidate.
+- Safety gate vetoes risky actions and enforces anti-thrashing policies.
+
+### 3) Infrastructure Layer
+
+- `k8s/` deploys app, autoscaler, Prometheus, and Grafana.
+- The autoscaler patches deployment replicas through Kubernetes API.
+
+### 4) Observability Layer
+
+- Prometheus scrapes app/autoscaler metrics and evaluates alerts.
+- Grafana visualizes operational and decision metrics.
+
+### 5) Audit + Analysis Layer
+
+- Decision-cycle records are stored in JSONL and DB backend.
+- `analysis/` scripts produce scorecards, explainability timelines, and counterfactual replay outputs.
+
+End-to-end flow:
+
+```mermaid
+flowchart LR
+	L[k6 Load] --> A[Demo App]
+	A --> P[Prometheus Scrape]
+	P --> C[Autoscaler Control Loop]
+	C --> K[Kubernetes Scale Patch]
+	C --> D[Audit Storage]
+	C --> M[Autoscaler Metrics]
+	M --> P
+	P --> G[Grafana]
+	D --> R[Analysis Reports]
+```
+
 ## Quick Start
 
 ### 1. Prerequisites
@@ -122,21 +187,131 @@ Primary index:
 
 ## Metrics To Watch
 
-Decision/loop metrics:
+### Core App Metrics (service health)
 
-- `autoscaler_decisions_total`
-- `autoscaler_current_desired_replicas`
-- `autoscaler_observed_rps`
-- `autoscaler_observed_p95_latency_seconds`
-- `autoscaler_observed_error_rate`
+1. `demo_app_requests_total`
 
-OpenAI usage/cost metrics:
+- What it means: cumulative request count by method/endpoint/status.
+- Why it matters: base signal for throughput and error-rate calculations.
 
-- `openai_agent_requests_total`
-- `openai_agent_prompt_tokens_total`
-- `openai_agent_completion_tokens_total`
-- `openai_agent_tokens_total`
-- `openai_agent_estimated_cost_usd_total`
+2. `demo_app_request_latency_seconds_bucket`
+
+- What it means: histogram buckets for request latency.
+- Why it matters: used to compute p95 latency via `histogram_quantile`.
+
+3. `demo_app_inprogress_requests`
+
+- What it means: currently active requests.
+- Why it matters: saturation proxy; helps avoid under-provisioning.
+
+### Autoscaler Control Metrics (decision behavior)
+
+1. `autoscaler_decisions_total`
+
+- What it means: count of decision cycles, typically with labels (action/veto).
+- Why it matters: reveals control-loop behavior and veto frequency over time.
+
+2. `autoscaler_current_desired_replicas`
+
+- What it means: latest desired replica target computed by the autoscaler.
+- Why it matters: compare against actual deployment replicas to detect lag or instability.
+
+3. `autoscaler_observed_rps`
+
+- What it means: request rate observed by control loop at decision time.
+- Why it matters: helps explain why scale actions were considered.
+
+4. `autoscaler_observed_p95_latency_seconds`
+
+- What it means: observed p95 latency at decision time.
+- Why it matters: primary SLO pressure signal for scale-up decisions.
+
+5. `autoscaler_observed_error_rate`
+
+- What it means: observed error fraction at decision time.
+- Why it matters: guards reliability during scale-down and noisy periods.
+
+### OpenAI Metrics (optional decision augmentation)
+
+1. `openai_agent_requests_total`
+
+- What it means: OpenAI call count grouped by outcome (`success`, `error`, `budget_exceeded`, etc).
+- Why it matters: confirms reliability and guardrail fallback behavior.
+
+2. `openai_agent_prompt_tokens_total`
+
+- What it means: cumulative prompt/input tokens.
+- Why it matters: cost driver for request input size.
+
+3. `openai_agent_completion_tokens_total`
+
+- What it means: cumulative completion/output tokens.
+- Why it matters: cost driver for model response size.
+
+4. `openai_agent_tokens_total`
+
+- What it means: cumulative total tokens.
+- Why it matters: budget cap and trend tracking.
+
+5. `openai_agent_estimated_cost_usd_total`
+
+- What it means: estimated cumulative USD cost from configured token prices.
+- Why it matters: ensures autoscaling intelligence stays within operational budget.
+
+## Grafana: How To Read The Dashboard
+
+Use dashboard panels as a causal chain, not isolated charts.
+
+1. Request Rate (RPS)
+
+- Rising RPS with stable latency/error usually means current capacity is still sufficient.
+
+2. p95 Latency
+
+- Persistent p95 increase with rising RPS indicates capacity pressure.
+- If p95 stays high after scale-up, investigate app bottlenecks beyond replicas.
+
+3. Error Rate
+
+- If error rises while latency also rises, likely overload.
+- If error rises alone, likely app/downstream failure, not only scaling.
+
+4. Replicas (actual vs desired)
+
+- `desired` rising before `actual` is normal short control lag.
+- Repeated up/down sawtooth pattern suggests policy too aggressive or thresholds too tight.
+
+5. OpenAI Tokens + Cost
+
+- Token growth with normal decision quality is expected when OpenAI is enabled.
+- `budget_exceeded` outcomes indicate guardrails are actively protecting cost.
+
+6. Vetoed Decisions
+
+- Occasional vetoes are healthy safety behavior.
+- Sustained veto surges suggest conflicting policy signals or unstable workload.
+
+## Quick Operational Heuristics
+
+1. Healthy run
+
+- p95 and error near thresholds,
+- replicas adjust without frequent reversals,
+- veto rate low/moderate,
+- no uncontrolled OpenAI cost growth.
+
+2. Likely under-provisioned
+
+- p95 up + error up + inprogress up + desired replicas climbing.
+
+3. Likely over-provisioned
+
+- low p95/error for long periods + low RPS + replicas stay high.
+
+4. Policy friction
+
+- many vetoes + little effective scaling.
+  Tune cooldowns/hysteresis and review thresholds.
 
 ## Load Profiles
 
