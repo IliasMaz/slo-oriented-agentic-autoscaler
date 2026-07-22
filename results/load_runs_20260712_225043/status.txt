@@ -1,0 +1,13 @@
+started_at=2026-07-12T19:50:43Z
+parallel=0
+dry_run=1
+profiles=burst ramp reality_simulation sawtooth soak spike steady
+burst exit_code=0
+ramp exit_code=0
+reality_simulation exit_code=0
+sawtooth exit_code=0
+soak exit_code=0
+spike exit_code=0
+steady exit_code=0
+finished_at=2026-07-12T19:50:43Z
+overall_exit=0

@@ -1,0 +1,23 @@
+{
+  "events_replayed": 120,
+  "action_changed_count": 0,
+  "action_changed_ratio": 0.0,
+  "original_action_distribution": {
+    "scale_up": 0,
+    "scale_down": 0,
+    "hold": 120
+  },
+  "counterfactual_action_distribution": {
+    "scale_up": 0,
+    "scale_down": 0,
+    "hold": 120
+  },
+  "weights_used": {
+    "latency": 0.4,
+    "error": 0.3,
+    "saturation": 0.15,
+    "throughput": 0.15,
+    "cost": 0.05,
+    "disagreement": 0.1
+  }
+}

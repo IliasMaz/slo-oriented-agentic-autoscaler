@@ -1,0 +1,8 @@
+started_at=2026-07-12T19:46:36Z
+parallel=1
+dry_run=1
+profiles=spike sawtooth
+sawtooth exit_code=0
+spike exit_code=0
+finished_at=2026-07-12T19:46:36Z
+overall_exit=0

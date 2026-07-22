@@ -1,0 +1,27 @@
+{
+  "candidate": {
+    "http_reqs": 10214.0,
+    "iterations": 10209.0,
+    "failed_rate": 0.03044840415116507,
+    "p95_ms": 1393.0918,
+    "avg_ms": 667.7626042686554,
+    "vus_max": 80.0
+  },
+  "baseline": {
+    "http_reqs": 8059.0,
+    "iterations": 8048.0,
+    "failed_rate": 0.02853952103238615,
+    "p95_ms": 877.2898999999998,
+    "avg_ms": 368.99183546345733,
+    "vus_max": 50.0
+  },
+  "scorecard": {
+    "candidate_score": 74.1,
+    "baseline_score": 80.29,
+    "score_delta": -6.19,
+    "score_delta_pct": -7.71,
+    "failed_rate_delta_pct": 6.69,
+    "p95_ms_delta_pct": 58.79,
+    "iterations_delta_pct": 26.85
+  }
+}
