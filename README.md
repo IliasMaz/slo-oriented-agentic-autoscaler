@@ -1,11 +1,28 @@
-# thesis-autoscaling
+# Beyond HPA: A Multi-Agent Autoscaling System for Kubernetes with LangGraph
 
-Agent-based autoscaler for Kubernetes with:
+> Academic thesis / research prototype for application-aware Kubernetes
+> autoscaling using multi-agent recommendations, weighted arbitration,
+> safety veto rules, Grafana, Prometheus and LangGraph orchestration.
 
-- multi-agent decision pipeline (latency, throughput, error, saturation, optional OpenAI)
-- arbitration + safety gate
-- Prometheus/Grafana observability
-- audit persistence (JSONL + DB backend)
+---
+
+## Academic Notice
+
+> This repository contains an academic research prototype developed as part of
+> a thesis project.
+>
+> It is intended for research, reproducibility, educational review, and
+> portfolio presentation.
+
+---
+
+## Copyright
+
+Copyright (c) 2026 Ilias Mazarakis.
+
+Unless otherwise stated, all original source code, design, documentation, and
+evaluation logic in this repository were created by the author as part of the
+thesis project.
 
 ## Problem This Project Solves
 
