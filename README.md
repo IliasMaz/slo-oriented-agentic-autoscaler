@@ -137,51 +137,45 @@ S(a) = w_L P_L(a) + w_E P_E(a) + w_S P_S(a) + w_T P_T(a) + w_C P_C(a) + w_D P_D(
 $$
 
 $$
-a^* = \arg\min_{a \in \{\text{scale\_down},\text{hold},\text{scale\_up}\}} S(a)
+a^* = \arg\min_{a \in \{d,h,u\}} S(a)
 $$
+
+Action mapping: $d$ means scale-down, $h$ means hold, $u$ means scale-up.
 
 Where normalization and penalties are:
 
 $$
-\mathrm{norm}(x,\tau)=\min\left(\frac{x}{\tau},2.0\right)
+n(x,\tau)=\min\left(\frac{x}{\tau},2.0\right)
 $$
 
 $$
-P_L(a)=\mathrm{norm}(p95,\tau_L)\cdot f(a),\;
-P_E(a)=\mathrm{norm}(err,\tau_E)\cdot f(a),\;
-P_S(a)=\mathrm{norm}(inprogress,\tau_S)\cdot f(a)
+P_L(a)=n(p95,\tau_L)\,f(a),\;
+P_E(a)=n(err,\tau_E)\,f(a),\;
+P_S(a)=n(inprogress,\tau_S)\,f(a)
 $$
 
 $$
-rps_{per\_replica}=\frac{rps}{\max(replicas,1)},\;
-P_T(a)=\mathrm{norm}(rps_{per\_replica},\tau_T)\cdot f(a)
+r_{rep}=\frac{rps}{\max(replicas,1)},\;
+P_T(a)=n(r_{rep},\tau_T)\,f(a)
 $$
 
 $$
-P_C(a)=\frac{replicas_a-MIN}{MAX-MIN}\cdot m(a)
+P_C(a)=\frac{R_a-MIN}{MAX-MIN}\,m(a)
 $$
 
 $$
-m(a)=
-\begin{cases}
-1.15, & a=\text{scale\_up}\\
-0.85, & a=\text{scale\_down}\\
-1.00, & a=\text{hold}
-\end{cases}
+m(u)=1.15,\;m(d)=0.85,\;m(h)=1.00
 $$
 
 $$
-P_D(a)=\frac{\sum_i c_i\,\mathbf{1}[action_i \neq a]}{\sum_i c_i}
+P_D(a)=\frac{\sum_i c_i\,I(a_i\neq a)}{\sum_i c_i}
 $$
 
 $$
-f(a)=
-\begin{cases}
-ACTION\_EFFECT\_UP, & a=\text{scale\_up}\\
-ACTION\_EFFECT\_DOWN, & a=\text{scale\_down}\\
-ACTION\_EFFECT\_HOLD, & a=\text{hold}
-\end{cases}
+f(u)=\alpha_u,\;f(d)=\alpha_d,\;f(h)=\alpha_h
 $$
+
+Config mapping: $\alpha_u$, $\alpha_d$, and $\alpha_h$ correspond to env vars `ACTION_EFFECT_UP`, `ACTION_EFFECT_DOWN`, and `ACTION_EFFECT_HOLD`.
 
 How to read these formulas in practice:
 
@@ -201,7 +195,7 @@ Assume for candidate `hold`:
 Then:
 
 $$
-S(\text{hold}) = 0.30\cdot1.20 + 0.25\cdot0.40 + 0.15\cdot0.80 + 0.15\cdot1.00 + 0.10\cdot0.30 + 0.20\cdot0.50 = 0.86
+S(h) = 0.30\cdot1.20 + 0.25\cdot0.40 + 0.15\cdot0.80 + 0.15\cdot1.00 + 0.10\cdot0.30 + 0.20\cdot0.50 = 0.86
 $$
 
 Compute the same for `scale_up` and `scale_down`; whichever has the lowest $S(a)$ is chosen.
