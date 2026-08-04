@@ -133,13 +133,7 @@ total_score =
 Mathematical form:
 
 $$
-S(a) =
-w_L P_L(a)
-+ w_E P_E(a)
-+ w_S P_S(a)
-+ w_T P_T(a)
-+ w_C P_C(a)
-+ w_D P_D(a)
+S(a) = w_L P_L(a) + w_E P_E(a) + w_S P_S(a) + w_T P_T(a) + w_C P_C(a) + w_D P_D(a)
 $$
 
 $$
@@ -149,18 +143,18 @@ $$
 Where normalization and penalties are:
 
 $$
-\operatorname{norm}(x,\tau)=\min\left(\frac{x}{\tau},2.0\right)
+\mathrm{norm}(x,\tau)=\min\left(\frac{x}{\tau},2.0\right)
 $$
 
 $$
-P_L(a)=\operatorname{norm}(p95,\tau_L)\cdot f(a),\;
-P_E(a)=\operatorname{norm}(err,\tau_E)\cdot f(a),\;
-P_S(a)=\operatorname{norm}(inprogress,\tau_S)\cdot f(a)
+P_L(a)=\mathrm{norm}(p95,\tau_L)\cdot f(a),\;
+P_E(a)=\mathrm{norm}(err,\tau_E)\cdot f(a),\;
+P_S(a)=\mathrm{norm}(inprogress,\tau_S)\cdot f(a)
 $$
 
 $$
 rps_{per\_replica}=\frac{rps}{\max(replicas,1)},\;
-P_T(a)=\operatorname{norm}(rps_{per\_replica},\tau_T)\cdot f(a)
+P_T(a)=\mathrm{norm}(rps_{per\_replica},\tau_T)\cdot f(a)
 $$
 
 $$
@@ -188,6 +182,29 @@ ACTION\_EFFECT\_DOWN, & a=\text{scale\_down}\\
 ACTION\_EFFECT\_HOLD, & a=\text{hold}
 \end{cases}
 $$
+
+How to read these formulas in practice:
+
+- `norm(x, τ)` converts each signal to a comparable penalty scale and caps extremes at `2.0`.
+- `f(a)` models expected action impact: values `< 1` make penalties lighter for an action, values `> 1` make them heavier.
+- `P_C(a)` is replica-cost pressure normalized between min/max replica bounds, then biased by action (`m(a)`).
+- `P_D(a)` increases when high-confidence agents disagree with candidate action `a`.
+- Final selection always picks the smallest score: lower is better.
+
+Quick mini-example:
+
+Assume for candidate `hold`:
+
+- `P_L=1.20`, `P_E=0.40`, `P_S=0.80`, `P_T=1.00`, `P_C=0.30`, `P_D=0.50`
+- Weights: `w_L=0.30`, `w_E=0.25`, `w_S=0.15`, `w_T=0.15`, `w_C=0.10`, `w_D=0.20`
+
+Then:
+
+$$
+S(\text{hold}) = 0.30\cdot1.20 + 0.25\cdot0.40 + 0.15\cdot0.80 + 0.15\cdot1.00 + 0.10\cdot0.30 + 0.20\cdot0.50 = 0.86
+$$
+
+Compute the same for `scale_up` and `scale_down`; whichever has the lowest $S(a)$ is chosen.
 
 Default weight configuration:
 
