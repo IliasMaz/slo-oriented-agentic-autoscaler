@@ -113,6 +113,103 @@ Key options in `.env`:
 - `MIN_SCALE_ACTION_INTERVAL_SECONDS`, `SCALE_DIRECTION_CHANGE_COOLDOWN_SECONDS`, and `SCALE_DOWN_RELEASE_MARGIN` for anti-thrashing safety
 - `AUDIT_DB_BACKEND=sqlite|postgres`
 
+## Arbitration Weights
+
+The arbitrator evaluates `scale_down`, `hold`, and `scale_up` by computing a weighted penalty score.
+The action with the minimum total score is selected.
+
+Score formula:
+
+```text
+total_score =
+	WEIGHT_LATENCY * latency_penalty
+	+ WEIGHT_ERROR * error_penalty
+	+ WEIGHT_SATURATION * saturation_penalty
+	+ WEIGHT_THROUGHPUT * throughput_penalty
+	+ WEIGHT_COST * cost_penalty
+	+ WEIGHT_AGENT_DISAGREEMENT * disagreement_penalty
+```
+
+Mathematical form:
+
+$$
+S(a) =
+w_L P_L(a)
++ w_E P_E(a)
++ w_S P_S(a)
++ w_T P_T(a)
++ w_C P_C(a)
++ w_D P_D(a)
+$$
+
+$$
+a^* = \arg\min_{a \in \{\text{scale\_down},\text{hold},\text{scale\_up}\}} S(a)
+$$
+
+Where normalization and penalties are:
+
+$$
+\operatorname{norm}(x,\tau)=\min\left(\frac{x}{\tau},2.0\right)
+$$
+
+$$
+P_L(a)=\operatorname{norm}(p95,\tau_L)\cdot f(a),\;
+P_E(a)=\operatorname{norm}(err,\tau_E)\cdot f(a),\;
+P_S(a)=\operatorname{norm}(inprogress,\tau_S)\cdot f(a)
+$$
+
+$$
+rps_{per\_replica}=\frac{rps}{\max(replicas,1)},\;
+P_T(a)=\operatorname{norm}(rps_{per\_replica},\tau_T)\cdot f(a)
+$$
+
+$$
+P_C(a)=\frac{replicas_a-MIN}{MAX-MIN}\cdot m(a)
+$$
+
+$$
+m(a)=
+\begin{cases}
+1.15, & a=\text{scale\_up}\\
+0.85, & a=\text{scale\_down}\\
+1.00, & a=\text{hold}
+\end{cases}
+$$
+
+$$
+P_D(a)=\frac{\sum_i c_i\,\mathbf{1}[action_i \neq a]}{\sum_i c_i}
+$$
+
+$$
+f(a)=
+\begin{cases}
+ACTION\_EFFECT\_UP, & a=\text{scale\_up}\\
+ACTION\_EFFECT\_DOWN, & a=\text{scale\_down}\\
+ACTION\_EFFECT\_HOLD, & a=\text{hold}
+\end{cases}
+$$
+
+Default weight configuration:
+
+- `WEIGHT_LATENCY=0.30`: prioritizes p95 latency protection.
+- `WEIGHT_ERROR=0.25`: prioritizes reliability/error-rate protection.
+- `WEIGHT_SATURATION=0.15`: captures overload pressure (`inprogress` signal).
+- `WEIGHT_THROUGHPUT=0.15`: tracks requests-per-second per replica efficiency.
+- `WEIGHT_COST=0.10`: penalizes higher replica cost.
+- `WEIGHT_AGENT_DISAGREEMENT=0.20`: penalizes conflicting agent recommendations.
+
+Where to set them:
+
+- In local `.env` for non-Kubernetes runs.
+- In `k8s/autoscaler-deployment.yaml` for cluster deployment.
+
+Practical tuning hints:
+
+- Increase `WEIGHT_LATENCY` and/or `WEIGHT_ERROR` when SLO protection is the top priority.
+- Increase `WEIGHT_COST` when cost control matters more than aggressive scaling.
+- Increase `WEIGHT_AGENT_DISAGREEMENT` when you want safer behavior under conflicting signals.
+- Keep changes small and iterative (for example, `0.05` per step), then validate via load profiles and audit replay.
+
 ### 3. Build And Deploy
 
 ```bash
