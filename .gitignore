@@ -22,17 +22,21 @@ ENV/
 # Local environment/config
 .env
 .env.*
+!.env.example
 
 # Editor settings
 .vscode/
 .idea/
 
 # Generated experiment outputs
-results/*
-!results/.gitkeep
+# Keep test artifacts in results/load_runs_* visible, including logs.
+
 
 # Misc logs
 *.log
+!results/load_runs_*/*.log
+!results/load_runs_*/logs/*.log
+
 
 # Local notes
 *.local.md
