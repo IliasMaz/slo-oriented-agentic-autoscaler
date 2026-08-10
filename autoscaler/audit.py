@@ -6,6 +6,7 @@ import os
 import sqlite3
 import threading
 
+from channel_logging import get_channel_logger, log_event
 from config import (
     AUDIT_DB_BACKEND,
     AUDIT_DB_HOST,
@@ -25,6 +26,7 @@ except Exception:  # pragma: no cover - optional dependency fallback
 
 _DB_INIT_LOCK = threading.Lock()
 _DB_READY = False
+audit_log = get_channel_logger("audit")
 
 
 def _extract_row(payload: dict) -> tuple:
@@ -233,4 +235,9 @@ def write_audit_line(payload: dict):
     try:
         _write_audit_db(payload)
     except Exception as exc:
-        print({"audit_db_error": str(exc), "backend": AUDIT_DB_BACKEND})
+        log_event(
+            audit_log,
+            "audit_db_error",
+            error=str(exc),
+            backend=AUDIT_DB_BACKEND,
+        )

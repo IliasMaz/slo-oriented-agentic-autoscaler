@@ -1,5 +1,7 @@
 """Decision arbitration placeholder."""
 
+from channel_logging import get_channel_logger, log_event
+
 from config import (
     ACTION_EFFECT_DOWN,
     ACTION_EFFECT_HOLD,
@@ -26,6 +28,9 @@ from models import (
     AggregatedDecision,
     MetricsSnapshot,
 )
+
+
+arbitration_log = get_channel_logger("arbitration")
 
 # This is a placeholder for the arbitration logic. The actual implementation would involve more complex decision-making based on the metrics and recommendations from different agents.
 
@@ -133,8 +138,23 @@ def compute_action_score(
 def arbitrate(
     metrics: MetricsSnapshot,
     recommendations: list[AgentRecommendation],
+    cycle_id: int | None = None,
 ) -> AggregatedDecision:
     candidate_actions = ["scale_down", "hold", "scale_up"]
+
+    votes_by_agent = {rec.agent_name: rec.action for rec in recommendations}
+    vote_weights = {
+        rec.agent_name: rec.confidence for rec in recommendations
+    }
+    log_event(
+        arbitration_log,
+        "aggregation_input",
+        title="aggregation:input_votes",
+        cycle_id=cycle_id,
+        current_replicas=metrics.current_replicas,
+        votes_by_agent=votes_by_agent,
+        vote_weights=vote_weights,
+    )
 
     scores = [
         compute_action_score(metrics, recommendations, action)
@@ -142,6 +162,33 @@ def arbitrate(
     ]
 
     best = min(scores, key=lambda item: item.total_score)
+
+    for item in scores:
+        log_event(
+            arbitration_log,
+            "candidate_score",
+            title=f"aggregation:candidate:{item.action}",
+            cycle_id=cycle_id,
+            action=item.action,
+            desired_replicas=item.desired_replicas,
+            total_score=item.total_score,
+            latency_penalty=item.latency_penalty,
+            error_penalty=item.error_penalty,
+            saturation_penalty=item.saturation_penalty,
+            throughput_penalty=item.throughput_penalty,
+            cost_penalty=item.cost_penalty,
+            disagreement_penalty=item.disagreement_penalty,
+        )
+
+    log_event(
+        arbitration_log,
+        "candidate_selected",
+        title=f"aggregation:selected:{best.action}",
+        cycle_id=cycle_id,
+        action=best.action,
+        desired_replicas=best.desired_replicas,
+        total_score=best.total_score,
+    )
 
     return AggregatedDecision(
         action=best.action,

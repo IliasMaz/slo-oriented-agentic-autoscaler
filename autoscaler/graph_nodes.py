@@ -1,6 +1,9 @@
+from collections import Counter
+
 from agents import run_agents
 from arbitration import arbitrate
 from audit import write_audit_line
+from channel_logging import get_channel_logger, log_event
 from config import TARGET_DEPLOYMENT, TARGET_NAMESPACE
 from graph_state import AutoscalerState
 from kubernetes_api import get_current_replicas, set_replicas
@@ -10,6 +13,12 @@ from safety import SafetyGate
 # Singleton: a single SafetyGate for the entire process lifecycle.
 # It keeps the cooldown timestamps between graph executions.
 SAFETY_GATE = SafetyGate()
+metrics_log = get_channel_logger("metrics")
+agents_log = get_channel_logger("agents")
+arbitration_log = get_channel_logger("arbitration")
+safety_log = get_channel_logger("safety")
+scaling_log = get_channel_logger("scaling")
+audit_log = get_channel_logger("audit")
 
 
 def fetch_metrics_node(state: AutoscalerState) -> dict:
@@ -24,6 +33,19 @@ def fetch_metrics_node(state: AutoscalerState) -> dict:
         deployment=TARGET_DEPLOYMENT,
     )
     snapshot = build_snapshot(current_replicas=current_replicas)
+    cycle_id = state.get("cycle_id")
+
+    log_event(
+        metrics_log,
+        "metrics_snapshot_built",
+        title="metrics:snapshot",
+        cycle_id=cycle_id,
+        current_replicas=current_replicas,
+        rps=snapshot.rps,
+        p95_latency=snapshot.p95_latency,
+        error_rate=snapshot.error_rate,
+        inprogress=snapshot.inprogress,
+    )
 
     return {
         "current_replicas": current_replicas,
@@ -39,7 +61,22 @@ def run_agents_node(state: AutoscalerState) -> dict:
     Each agent sees the snapshot and returns an AgentRecommendation.
     """
 
-    recommendations = run_agents(state["metrics_snapshot"])
+    recommendations = run_agents(
+        state["metrics_snapshot"],
+        cycle_id=state.get("cycle_id"),
+    )
+    cycle_id = state.get("cycle_id")
+    votes_by_agent = {r.agent_name: r.action for r in recommendations}
+    vote_counts = dict(Counter(r.action for r in recommendations))
+    log_event(
+        agents_log,
+        "agents_completed",
+        title="agents:aggregate_votes",
+        cycle_id=cycle_id,
+        recommendation_count=len(recommendations),
+        votes_by_agent=votes_by_agent,
+        vote_counts=vote_counts,
+    )
     return {"agent_recommendations": recommendations}
 
 
@@ -52,7 +89,21 @@ def arbitrate_node(state: AutoscalerState) -> dict:
     Selects the one with the lowest weighted penalty score.
     """
 
-    aggregate = arbitrate(state["metrics_snapshot"], state["agent_recommendations"])
+    aggregate = arbitrate(
+        state["metrics_snapshot"],
+        state["agent_recommendations"],
+        cycle_id=state.get("cycle_id"),
+    )
+    cycle_id = state.get("cycle_id")
+    log_event(
+        arbitration_log,
+        "arbitration_selected",
+        title=f"aggregation:final:{aggregate.action}",
+        cycle_id=cycle_id,
+        action=aggregate.action,
+        desired_replicas=aggregate.desired_replicas,
+        reason=aggregate.reason,
+    )
     return {"aggregated_decision": aggregate}
 
 
@@ -65,6 +116,18 @@ def apply_safety_node(state: AutoscalerState) -> dict:
     final_decision, veto_results = SAFETY_GATE.apply(
         state["aggregated_decision"],
         state["metrics_snapshot"],
+    )
+    cycle_id = state.get("cycle_id")
+    triggered = [rule.rule_name for rule in veto_results if rule.triggered]
+    log_event(
+        safety_log,
+        "safety_evaluated",
+        title=f"safety:{final_decision.action}",
+        cycle_id=cycle_id,
+        requested_action=state["aggregated_decision"].action,
+        final_action=final_decision.action,
+        veto_applied=final_decision.veto_applied,
+        triggered_rules=triggered,
     )
     return {
         "final_decision": final_decision,
@@ -80,19 +143,54 @@ def scale_node(state: AutoscalerState) -> dict:
     """
     final_decision = state["final_decision"]
     current_replicas = state["current_replicas"]
+    cycle_id = state.get("cycle_id")
+    desired_replicas = final_decision.desired_replicas
+    delta = desired_replicas - current_replicas
 
     scaled = False
 
     if (
         final_decision.action in {"scale_up", "scale_down"}
-        and final_decision.desired_replicas != current_replicas
+        and desired_replicas != current_replicas
     ):
+        log_event(
+            scaling_log,
+            "scale_patch_attempt",
+            title=f"replicas:apply:{current_replicas}->{desired_replicas}",
+            cycle_id=cycle_id,
+            namespace=TARGET_NAMESPACE,
+            deployment=TARGET_DEPLOYMENT,
+            from_replicas=current_replicas,
+            to_replicas=desired_replicas,
+            delta=delta,
+            action=final_decision.action,
+        )
         set_replicas(
             namespace=TARGET_NAMESPACE,
             deployment=TARGET_DEPLOYMENT,
-            replicas=final_decision.desired_replicas,
+            replicas=desired_replicas,
         )
         scaled = True
+
+    status = "applied" if scaled else "skipped"
+    if not scaled and final_decision.veto_applied:
+        status = "skipped_veto"
+    elif not scaled and delta == 0:
+        status = "skipped_no_change"
+
+    log_event(
+        scaling_log,
+        "replica_transition",
+        title=f"replicas:{status}:{current_replicas}->{desired_replicas}",
+        cycle_id=cycle_id,
+        status=status,
+        action=final_decision.action,
+        scaled=scaled,
+        from_replicas=current_replicas,
+        to_replicas=desired_replicas,
+        delta=delta,
+        veto_applied=final_decision.veto_applied,
+    )
 
     return {"scaled": scaled}
 
@@ -104,6 +202,7 @@ def audit_node(state: AutoscalerState) -> dict:
     and writes it as a JSONL line to the audit log.
     """
     payload = {
+        "cycle_id": state.get("cycle_id"),
         "snapshot": state["metrics_snapshot"].model_dump(),
         "recommendations": [
             rec.model_dump() for rec in state["agent_recommendations"]
@@ -117,5 +216,13 @@ def audit_node(state: AutoscalerState) -> dict:
     }
 
     write_audit_line(payload)
-    print(payload)
+    log_event(
+        audit_log,
+        "audit_payload_written",
+        title="audit:cycle_written",
+        cycle_id=state.get("cycle_id"),
+        action=state["final_decision"].action,
+        desired_replicas=state["final_decision"].desired_replicas,
+        scaled=state.get("scaled", False),
+    )
     return {"audit_payload": payload}

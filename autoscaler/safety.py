@@ -6,6 +6,7 @@ before scale actuation.
 
 import time
 
+from channel_logging import get_channel_logger, log_event
 from config import (
     ERROR_RATE_THRESHOLD,
     INPROGRESS_THRESHOLD,
@@ -28,6 +29,9 @@ from models import (
     VetoRuleResult,
 )
 from veto_policy import VetoPolicy
+
+
+safety_log = get_channel_logger("safety")
 
 class SafetyGate:
     def __init__(self):
@@ -256,6 +260,14 @@ class SafetyGate:
             self._rule_excessive_scale_up_step(metrics, decision),
         ]
 
+        log_event(
+            safety_log,
+            "safety_rules_evaluated",
+            action=decision.action,
+            desired_replicas=decision.desired_replicas,
+            triggered=[rule.rule_name for rule in results if rule.triggered],
+        )
+
         return results
 
     def apply(
@@ -268,6 +280,14 @@ class SafetyGate:
 
         if triggered_rules:
             first_rule = triggered_rules[0]
+            log_event(
+                safety_log,
+                "safety_veto_applied",
+                requested_action=decision.action,
+                veto_rule=first_rule.rule_name,
+                reason=first_rule.reason,
+                current_replicas=metrics.current_replicas,
+            )
             return (
                 FinalDecision(
                     action="hold",
