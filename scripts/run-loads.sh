@@ -2,6 +2,14 @@
 
 set -uo pipefail
 
+stage_log() {
+  local stage="$1"
+  shift
+  local ts
+  ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  echo "[load-runner] ts=${ts} stage=${stage} $*"
+}
+
 print_usage() {
   cat <<'EOF'
 Usage:
@@ -214,11 +222,13 @@ status_file="${run_dir}/status.txt"
 } > "$status_file"
 
 echo "Run directory: $run_dir"
+stage_log "initialized" "run_dir=${run_dir} parallel=${parallel_mode} dry_run=${dry_run} profiles=${requested_profiles[*]}"
 
 run_one() {
   local profile="$1"
   local summary_path="${json_dir}/${profile}_summary.json"
   local log_path="${log_dir}/${profile}.log"
+  stage_log "profile_start" "profile=${profile} dry_run=${dry_run}"
 
   if [ "$dry_run" -eq 1 ]; then
     {
@@ -227,12 +237,14 @@ run_one() {
     } > "$log_path" 2>&1
     local exit_code=$?
     printf '%s exit_code=%s\n' "$profile" "$exit_code" >> "$status_file"
+    stage_log "profile_end" "profile=${profile} exit_code=${exit_code} log=${log_path}"
     return "$exit_code"
   fi
 
   k6 run "load/${profile}.js" --summary-export "$summary_path" > "$log_path" 2>&1
   local exit_code=$?
   printf '%s exit_code=%s\n' "$profile" "$exit_code" >> "$status_file"
+  stage_log "profile_end" "profile=${profile} exit_code=${exit_code} summary=${summary_path} log=${log_path}"
   return "$exit_code"
 }
 
@@ -276,6 +288,8 @@ if [ "$overall_exit" -eq 0 ]; then
 else
   echo "One or more load profiles failed."
 fi
+
+stage_log "completed" "overall_exit=${overall_exit} status=${status_file} json_dir=${json_dir} log_dir=${log_dir}"
 
 echo "Artifacts:"
 echo "- Status: ${status_file}"
