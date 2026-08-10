@@ -14,6 +14,9 @@ from models import (
 class AutoscalerState(TypedDict, total=False):
     """The shared state of the autoscaler."""
 
+  # lifecycle correlation id for each control cycle
+    cycle_id: int
+
   # step 1 fetch metrics from prometheus
     current_replicas: int
     metrics_snapshot: MetricsSnapshot

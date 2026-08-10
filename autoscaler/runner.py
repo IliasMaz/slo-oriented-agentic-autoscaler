@@ -17,9 +17,9 @@ class GraphRunner:
     def __init__(self):
         self.graph = build_graph()
 
-    def _run_sequential_fallback(self) -> dict:
+    def _run_sequential_fallback(self, cycle_id: int | None = None) -> dict:
         """Fallback path that mirrors the graph edges step-by-step."""
-        state: dict = {}
+        state: dict = {"cycle_id": cycle_id}
         state.update(fetch_metrics_node(state))
         state.update(run_agents_node(state))
         state.update(arbitrate_node(state))
@@ -28,12 +28,12 @@ class GraphRunner:
         state.update(audit_node(state))
         return state
 
-    def run_once(self) -> dict:
+    def run_once(self, cycle_id: int | None = None) -> dict:
         # Some LangGraph versions can raise an empty-write runtime error even for
         # valid graphs. Use a deterministic fallback to keep control-loop alive.
         try:
-            return self.graph.invoke({"scaled": False})
+            return self.graph.invoke({"scaled": False, "cycle_id": cycle_id})
         except Exception as exc:
             if "Must write to at least one of" not in str(exc):
                 raise
-            return self._run_sequential_fallback()
+            return self._run_sequential_fallback(cycle_id=cycle_id)

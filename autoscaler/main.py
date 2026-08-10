@@ -11,11 +11,13 @@
 
 import threading
 import time
+from collections import Counter
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Response
 from prometheus_client import CONTENT_TYPE_LATEST, Counter, Gauge, generate_latest
 
+from channel_logging import get_channel_logger, log_event
 from config import POLL_INTERVAL_SECONDS
 from kubernetes_api import load_cluster_config
 from runner import GraphRunner
@@ -30,6 +32,9 @@ async def lifespan(_app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 runner = GraphRunner()
+
+errors_log = get_channel_logger("errors")
+lifecycle_log = get_channel_logger("lifecycle")
 
 AUTOSCALER_DECISIONS_TOTAL = Counter(
     "autoscaler_decisions_total",
@@ -64,14 +69,43 @@ AUTOSCALER_OBSERVED_INPROGRESS = Gauge(
 
 
 def control_loop():
+    log_event(
+        lifecycle_log,
+        "initialized",
+        title="lifecycle:initialized",
+        poll_interval_seconds=POLL_INTERVAL_SECONDS,
+    )
     load_cluster_config()
+    log_event(
+        lifecycle_log,
+        "cluster_config_loaded",
+        title="lifecycle:cluster_config_loaded",
+    )
+
+    cycle_id = 0
 
     while True:
+        cycle_id += 1
+        log_event(
+            lifecycle_log,
+            "cycle_start",
+            title=f"lifecycle:cycle_start:{cycle_id}",
+            cycle_id=cycle_id,
+        )
         try:
-            result = runner.run_once()
+            result = runner.run_once(cycle_id=cycle_id)
 
             snapshot = result["metrics_snapshot"]
             final_decision = result["final_decision"]
+            current_replicas = result["current_replicas"]
+            desired_replicas = final_decision.desired_replicas
+            delta = desired_replicas - current_replicas
+            vote_counts = dict(
+                Counter(r.action for r in result["agent_recommendations"])
+            )
+            votes_by_agent = {
+                r.agent_name: r.action for r in result["agent_recommendations"]
+            }
 
             AUTOSCALER_OBSERVED_RPS.set(snapshot.rps)
             AUTOSCALER_OBSERVED_P95_LATENCY.set(snapshot.p95_latency)
@@ -87,8 +121,33 @@ def control_loop():
                 veto=str(final_decision.veto_applied).lower(),
             ).inc()
 
+            log_event(
+                lifecycle_log,
+                "cycle_end",
+                title=f"lifecycle:cycle_end:{cycle_id}:{final_decision.action}",
+                cycle_id=cycle_id,
+                action=final_decision.action,
+                desired_replicas=final_decision.desired_replicas,
+                current_replicas=current_replicas,
+                replica_delta=delta,
+                scaled=result.get("scaled", False),
+                veto_applied=final_decision.veto_applied,
+                vote_counts=vote_counts,
+                votes_by_agent=votes_by_agent,
+                rps=snapshot.rps,
+                p95_latency=snapshot.p95_latency,
+                error_rate=snapshot.error_rate,
+                inprogress=snapshot.inprogress,
+            )
+
         except Exception as exc:
-            print({"control_loop_error": str(exc)})
+            log_event(
+                errors_log,
+                "cycle_error",
+                title=f"errors:cycle:{cycle_id}",
+                cycle_id=cycle_id,
+                error=str(exc),
+            )
 
         time.sleep(POLL_INTERVAL_SECONDS)
 
