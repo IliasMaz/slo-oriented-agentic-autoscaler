@@ -91,3 +91,9 @@ WEIGHT_AGENT_DISAGREEMENT = get_env_float("WEIGHT_AGENT_DISAGREEMENT", 0.2) # Th
 ACTION_EFFECT_UP = get_env_float("ACTION_EFFECT_UP", 0.8) # This is the expected effect of a scale-up action on the metrics.
 ACTION_EFFECT_DOWN = get_env_float("ACTION_EFFECT_DOWN", 1.2) # This is the expected effect of a scale-down action on the metrics.
 ACTION_EFFECT_HOLD = get_env_float("ACTION_EFFECT_HOLD", 1.0) # This is the expected effect of a hold action on the metrics.
+
+# Channel logging configuration
+LOG_DIR = get_env("LOG_DIR", "/tmp/autoscaler/logs")
+LOG_LEVEL = get_env("LOG_LEVEL", "INFO")
+LOG_MAX_BYTES = get_env_int("LOG_MAX_BYTES", 5_000_000)
+LOG_BACKUP_COUNT = get_env_int("LOG_BACKUP_COUNT", 5)
