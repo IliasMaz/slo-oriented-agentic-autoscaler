@@ -112,6 +112,7 @@ Key options in `.env`:
 - `OPENAI_MAX_TOTAL_COST_USD` and `OPENAI_MAX_TOTAL_TOKENS` for runtime budget guardrails (`0` disables)
 - `MIN_SCALE_ACTION_INTERVAL_SECONDS`, `SCALE_DIRECTION_CHANGE_COOLDOWN_SECONDS`, and `SCALE_DOWN_RELEASE_MARGIN` for anti-thrashing safety
 - `AUDIT_DB_BACKEND=sqlite|postgres`
+- `LOG_DIR=storage/logs/autoscaler` for channel logs (`lifecycle`, `errors`, `metrics`, `agents`, `arbitration`, `safety`, `scaling`, `audit`)
 
 ## Arbitration Weights
 
@@ -470,7 +471,10 @@ Each run creates `results/load_runs_YYYYMMDD_HHMMSS/` with:
 
 - `status.txt`
 - `json/*_summary.json`
-- `logs/*.log`
+
+The per-profile k6 logs are stored in:
+
+- `storage/logs/load_runs_YYYYMMDD_HHMMSS/*.log`
 
 Manual direct k6 commands (optional):
 

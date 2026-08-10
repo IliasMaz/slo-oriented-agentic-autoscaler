@@ -202,7 +202,10 @@ Each load execution creates `results/load_runs_YYYYMMDD_HHMMSS/` with:
 
 - `status.txt` (start/finish, selected profiles, per-profile exit code, overall_exit)
 - `json/*_summary.json` (k6 summary exports)
-- `logs/*.log` (full k6 output per profile)
+
+Per-profile full k6 output logs are stored in:
+
+- `storage/logs/load_runs_YYYYMMDD_HHMMSS/*.log`
 
 This ensures reproducible experiment traces even when running one profile or multiple profiles in parallel.
 
