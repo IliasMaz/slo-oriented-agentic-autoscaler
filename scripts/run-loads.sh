@@ -209,7 +209,7 @@ done
 timestamp="$(date +%Y%m%d_%H%M%S)"
 run_dir="${output_base}/load_runs_${timestamp}"
 json_dir="${run_dir}/json"
-log_dir="${run_dir}/logs"
+log_dir="storage/logs/load_runs_${timestamp}"
 mkdir -p "$json_dir" "$log_dir"
 
 status_file="${run_dir}/status.txt"
