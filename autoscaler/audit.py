@@ -2,6 +2,7 @@
 
 
 import json
+import importlib
 import os
 import sqlite3
 import threading
@@ -19,7 +20,7 @@ from config import (
 )
 
 try:
-    import psycopg
+    psycopg = importlib.import_module("psycopg")
 except Exception:  # pragma: no cover - optional dependency fallback
     psycopg = None
 
