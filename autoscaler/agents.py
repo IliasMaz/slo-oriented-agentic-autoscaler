@@ -10,8 +10,12 @@ from config import (
   SCALE_UP_STEP
 )
 
+from channel_logging import get_channel_logger, log_event
 from models import MetricsSnapshot, AgentRecommendation
 from openai_agent import openai_decision_agent
+
+
+agents_log = get_channel_logger("agents")
 
 def clamp(value: int) -> int:
     """Clamp the value between MIN_REPLICAS and MAX_REPLICAS."""
@@ -121,7 +125,7 @@ def saturation_agent(metrics: MetricsSnapshot) -> AgentRecommendation:
         reason=f"In-progress requests {metrics.inprogress} is within acceptable range"
     )
 
-def run_agents(metrics: MetricsSnapshot) -> list[AgentRecommendation]:
+def run_agents(metrics: MetricsSnapshot, cycle_id: int | None = None) -> list[AgentRecommendation]:
     """Run all agents and return their recommendations."""
     recommendations = [
         latency_agent(metrics),
@@ -130,8 +134,46 @@ def run_agents(metrics: MetricsSnapshot) -> list[AgentRecommendation]:
         saturation_agent(metrics)
     ]
 
+    for rec in recommendations:
+        log_event(
+            agents_log,
+            "agent_recommendation",
+            title=f"{rec.agent_name}:{rec.action}",
+            cycle_id=cycle_id,
+            agent_name=rec.agent_name,
+            action=rec.action,
+            desired_replicas=rec.desired_replicas,
+            confidence=rec.confidence,
+            reason=rec.reason,
+        )
+
     if OPENAI_AGENT_ENABLED:
         openai_recommendation = openai_decision_agent(metrics)
         recommendations.append(openai_recommendation)
+        log_event(
+            agents_log,
+            "agent_recommendation",
+            title=f"{openai_recommendation.agent_name}:{openai_recommendation.action}",
+            cycle_id=cycle_id,
+            agent_name=openai_recommendation.agent_name,
+            action=openai_recommendation.action,
+            desired_replicas=openai_recommendation.desired_replicas,
+            confidence=openai_recommendation.confidence,
+            reason=openai_recommendation.reason,
+        )
+
+    votes_compact = [
+        f"{rec.agent_name}:{rec.action}:{rec.desired_replicas}"
+        for rec in recommendations
+    ]
+
+    log_event(
+        agents_log,
+        "agents_batch_complete",
+        title="agents:votes_summary",
+        cycle_id=cycle_id,
+        count=len(recommendations),
+        votes_compact=votes_compact,
+    )
 
     return recommendations
