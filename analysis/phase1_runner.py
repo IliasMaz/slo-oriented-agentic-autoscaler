@@ -21,14 +21,14 @@ def main() -> None:
     parser.add_argument("--candidate", required=True, help="k6 candidate summary JSON")
     parser.add_argument("--baseline", required=True, help="k6 baseline summary JSON")
     parser.add_argument("--jsonl", required=True, help="Audit payloads JSONL")
-    parser.add_argument("--output-dir", default="results", help="Output directory")
+    parser.add_argument("--output-dir", default="artifacts", help="Output directory")
     args = parser.parse_args()
 
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     json_dir = output_dir / "json"
     json_dir.mkdir(parents=True, exist_ok=True)
-    reports_dir = Path("reports")
+    reports_dir = Path("docs.local")
     reports_dir.mkdir(parents=True, exist_ok=True)
 
     benchmark_out = json_dir / "benchmark_scorecard_spike_vs_sawtooth.json"

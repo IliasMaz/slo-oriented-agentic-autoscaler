@@ -112,7 +112,7 @@ Key options in `.env`:
 - `OPENAI_MAX_TOTAL_COST_USD` and `OPENAI_MAX_TOTAL_TOKENS` for runtime budget guardrails (`0` disables)
 - `MIN_SCALE_ACTION_INTERVAL_SECONDS`, `SCALE_DIRECTION_CHANGE_COOLDOWN_SECONDS`, and `SCALE_DOWN_RELEASE_MARGIN` for anti-thrashing safety
 - `AUDIT_DB_BACKEND=sqlite|postgres`
-- `LOG_DIR=storage/logs/autoscaler` for channel logs (`lifecycle`, `errors`, `metrics`, `agents`, `arbitration`, `safety`, `scaling`, `audit`)
+- `LOG_DIR=artifacts/logs/autoscaler` for channel logs (`lifecycle`, `errors`, `metrics`, `agents`, `arbitration`, `safety`, `scaling`, `audit`, `timeline`)
 
 ## Arbitration Weights
 
@@ -283,7 +283,7 @@ kubectl exec -n thesis-autoscaling deploy/agent-autoscaler -c audit-db -- \
 
 For GUI setup in DBeaver, see:
 
-- [reports/dbeaver_postgres_sidecar_setup.md](reports/dbeaver_postgres_sidecar_setup.md)
+- [docs.local/dbeaver_postgres_sidecar_setup.md](docs.local/dbeaver_postgres_sidecar_setup.md)
 
 ### Audit Table Schema (`public.audit_events`)
 
@@ -467,15 +467,19 @@ All profiles:
 ./scripts/run-loads.sh --all
 ```
 
-Each run creates `results/load_runs_YYYYMMDD_HHMMSS/` with:
+Each run creates `artifacts/runs/load_runs_YYYYMMDD_HHMMSS/` with:
 
 - `status.txt`
 - `json/*_summary.json`
 
 The per-profile k6 logs are stored in:
 
-- `storage/logs/load_runs_YYYYMMDD_HHMMSS/*.log`
-- `storage/logs/load_runs_YYYYMMDD_HHMMSS/*.jsonl` (same basename as `.log`, for structured start/end events)
+- `artifacts/logs/load_runs_YYYYMMDD_HHMMSS/*.log`
+- `artifacts/logs/load_runs_YYYYMMDD_HHMMSS/*.jsonl` (same basename as `.log`, for structured start/end events)
+
+The autoscaler decision flow is stored in:
+
+- `artifacts/logs/autoscaler/timeline.log`
 
 Manual direct k6 commands (optional):
 
@@ -499,7 +503,7 @@ The repository now includes three analysis scripts under `analysis/`:
 python3 analysis/benchmark_scorecard.py \
 	--candidate /tmp/k6-spike-summary.json \
 	--baseline /tmp/k6-sawtooth-summary.json \
-	--output results/json/benchmark_scorecard_spike_vs_sawtooth.json
+	--output artifacts/json/benchmark_scorecard_spike_vs_sawtooth.json
 ```
 
 2. Explainability timeline (read-only)
@@ -508,7 +512,7 @@ python3 analysis/benchmark_scorecard.py \
 python3 analysis/explainability_timeline.py \
 	--jsonl /tmp/audit_payloads.jsonl \
 	--limit 40 \
-	--output reports/explainability_timeline_latest.md
+	--output docs.local/explainability_timeline_latest.md
 ```
 
 3. Counterfactual replay MVP
@@ -519,7 +523,7 @@ python3 analysis/counterfactual_replay.py \
 	--limit 120 \
 	--w-cost 0.2 \
 	--w-disagreement 0.1 \
-	--output results/json/counterfactual_replay_summary.json
+	--output artifacts/json/counterfactual_replay_summary.json
 ```
 
 4. Full phase runner (one command)
@@ -529,7 +533,7 @@ python3 analysis/phase1_runner.py \
 	--candidate /tmp/k6-spike-summary.json \
 	--baseline /tmp/k6-sawtooth-summary.json \
 	--jsonl /tmp/audit_payloads.jsonl \
-	--output-dir results
+	--output-dir artifacts
 ```
 
 5. Decision replay (single cycle debugging)
@@ -546,7 +550,7 @@ Or from SQLite backend:
 python3 analysis/decision_replay.py \
 	--sqlite /tmp/autoscaler/audit.db \
 	--cycle-id 42 \
-	--output reports/decision_replay_cycle_42.md
+	--output docs.local/decision_replay_cycle_42.md
 ```
 
 The replay output summarizes end-to-end decision path for one cycle:
@@ -567,25 +571,27 @@ kubectl exec -n thesis-autoscaling deploy/agent-autoscaler -c audit-db -- \
 
 ## Results Folder
 
-Reports and run notes are stored in `reports/`.
-JSON artifacts are stored in `results/json/`.
+Reports and run notes are stored in `docs.local/`.
+JSON artifacts are stored in `artifacts/json/`.
 
-- [reports/latest_validation_report.md](reports/latest_validation_report.md)
-- [reports/latest_validation_report_v2.md](reports/latest_validation_report_v2.md)
-- [reports/cheat_sheet_runbook_el.md](reports/cheat_sheet_runbook_el.md)
-- [reports/security_and_kos_report.md](reports/security_and_kos_report.md)
-- [reports/first_presentation_flow_guide.md](reports/first_presentation_flow_guide.md)
-- [reports/showcase_presentation_step_by_step.md](reports/showcase_presentation_step_by_step.md)
-- [reports/how_it_works_a_to_omega.md](reports/how_it_works_a_to_omega.md)
-- [reports/dbeaver_postgres_sidecar_setup.md](reports/dbeaver_postgres_sidecar_setup.md)
-- [reports/load_test_sawtooth_report.md](reports/load_test_sawtooth_report.md)
-- [reports/load_test_spike_report.md](reports/load_test_spike_report.md)
-- [results/json/benchmark_scorecard_spike_vs_sawtooth.json](results/json/benchmark_scorecard_spike_vs_sawtooth.json)
-- [reports/explainability_timeline_latest.md](reports/explainability_timeline_latest.md)
-- [results/json/counterfactual_replay_summary.json](results/json/counterfactual_replay_summary.json)
-- [results/json/counterfactual_replay_latency_priority.json](results/json/counterfactual_replay_latency_priority.json)
-- [results/json/phase1_runner_manifest.json](results/json/phase1_runner_manifest.json)
-- [reports/phase1_todos_completion.md](reports/phase1_todos_completion.md)
+`docs.local/` is intentionally gitignored for personal documentation notes.
+
+- [docs.local/latest_validation_report.md](docs.local/latest_validation_report.md)
+- [docs.local/latest_validation_report_v2.md](docs.local/latest_validation_report_v2.md)
+- [docs.local/cheat_sheet_runbook_el.md](docs.local/cheat_sheet_runbook_el.md)
+- [docs.local/security_and_kos_report.md](docs.local/security_and_kos_report.md)
+- [docs.local/first_presentation_flow_guide.md](docs.local/first_presentation_flow_guide.md)
+- [docs.local/showcase_presentation_step_by_step.md](docs.local/showcase_presentation_step_by_step.md)
+- [docs.local/how_it_works_a_to_omega.md](docs.local/how_it_works_a_to_omega.md)
+- [docs.local/dbeaver_postgres_sidecar_setup.md](docs.local/dbeaver_postgres_sidecar_setup.md)
+- [docs.local/load_test_sawtooth_report.md](docs.local/load_test_sawtooth_report.md)
+- [docs.local/load_test_spike_report.md](docs.local/load_test_spike_report.md)
+- [artifacts/json/benchmark_scorecard_spike_vs_sawtooth.json](artifacts/json/benchmark_scorecard_spike_vs_sawtooth.json)
+- [docs.local/explainability_timeline_latest.md](docs.local/explainability_timeline_latest.md)
+- [artifacts/json/counterfactual_replay_summary.json](artifacts/json/counterfactual_replay_summary.json)
+- [artifacts/json/counterfactual_replay_latency_priority.json](artifacts/json/counterfactual_replay_latency_priority.json)
+- [artifacts/json/phase1_runner_manifest.json](artifacts/json/phase1_runner_manifest.json)
+- [docs.local/phase1_todos_completion.md](docs.local/phase1_todos_completion.md)
 
 ## Project Structure
 
@@ -595,5 +601,5 @@ JSON artifacts are stored in `results/json/`.
 - `k8s/`: manifests
 - `load/`: k6 scenarios
 - `scripts/`: bootstrap/deploy helpers
-- `results/`: generated run artifacts + JSON outputs
-- `reports/`: markdown reports and runbooks
+- `artifacts/`: generated run artifacts, logs, and JSON outputs
+- `docs.local/`: local markdown reports and runbooks (gitignored)

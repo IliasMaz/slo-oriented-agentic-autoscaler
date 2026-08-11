@@ -29,14 +29,13 @@ ENV/
 .idea/
 
 # Generated experiment outputs
-# Keep test artifacts in results/load_runs_* visible, including logs.
+artifacts/
 
 
 # Misc logs
 *.log
-!results/load_runs_*/*.log
-!results/load_runs_*/logs/*.log
 
 
 # Local notes
 *.local.md
+docs.local/
