@@ -10,6 +10,27 @@ stage_log() {
   echo "[load-runner] ts=${ts} stage=${stage} $*"
 }
 
+append_profile_jsonl() {
+  local jsonl_path="$1"
+  local event="$2"
+  local profile="$3"
+  local dry_run_value="$4"
+  local exit_code_value="$5"
+  local summary_path_value="$6"
+  local log_path_value="$7"
+  local ts
+
+  ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+  if [ -n "$summary_path_value" ]; then
+    printf '{"ts":"%s","event":"%s","profile":"%s","dry_run":%s,"exit_code":%s,"summary_path":"%s","log_path":"%s"}\n' \
+      "$ts" "$event" "$profile" "$dry_run_value" "$exit_code_value" "$summary_path_value" "$log_path_value" >> "$jsonl_path"
+  else
+    printf '{"ts":"%s","event":"%s","profile":"%s","dry_run":%s,"exit_code":%s,"summary_path":null,"log_path":"%s"}\n' \
+      "$ts" "$event" "$profile" "$dry_run_value" "$exit_code_value" "$log_path_value" >> "$jsonl_path"
+  fi
+}
+
 print_usage() {
   cat <<'EOF'
 Usage:
@@ -228,7 +249,9 @@ run_one() {
   local profile="$1"
   local summary_path="${json_dir}/${profile}_summary.json"
   local log_path="${log_dir}/${profile}.log"
+  local jsonl_path="${log_dir}/${profile}.jsonl"
   stage_log "profile_start" "profile=${profile} dry_run=${dry_run}"
+  append_profile_jsonl "$jsonl_path" "profile_start" "$profile" "$dry_run" "-1" "" "$log_path"
 
   if [ "$dry_run" -eq 1 ]; then
     {
@@ -238,6 +261,7 @@ run_one() {
     local exit_code=$?
     printf '%s exit_code=%s\n' "$profile" "$exit_code" >> "$status_file"
     stage_log "profile_end" "profile=${profile} exit_code=${exit_code} log=${log_path}"
+    append_profile_jsonl "$jsonl_path" "profile_end" "$profile" "$dry_run" "$exit_code" "" "$log_path"
     return "$exit_code"
   fi
 
@@ -245,6 +269,7 @@ run_one() {
   local exit_code=$?
   printf '%s exit_code=%s\n' "$profile" "$exit_code" >> "$status_file"
   stage_log "profile_end" "profile=${profile} exit_code=${exit_code} summary=${summary_path} log=${log_path}"
+  append_profile_jsonl "$jsonl_path" "profile_end" "$profile" "$dry_run" "$exit_code" "$summary_path" "$log_path"
   return "$exit_code"
 }
 

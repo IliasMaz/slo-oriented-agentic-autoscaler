@@ -475,6 +475,7 @@ Each run creates `results/load_runs_YYYYMMDD_HHMMSS/` with:
 The per-profile k6 logs are stored in:
 
 - `storage/logs/load_runs_YYYYMMDD_HHMMSS/*.log`
+- `storage/logs/load_runs_YYYYMMDD_HHMMSS/*.jsonl` (same basename as `.log`, for structured start/end events)
 
 Manual direct k6 commands (optional):
 
@@ -530,6 +531,31 @@ python3 analysis/phase1_runner.py \
 	--jsonl /tmp/audit_payloads.jsonl \
 	--output-dir results
 ```
+
+5. Decision replay (single cycle debugging)
+
+```bash
+python3 analysis/decision_replay.py \
+	--jsonl /tmp/audit_payloads.jsonl \
+	--cycle-id 42
+```
+
+Or from SQLite backend:
+
+```bash
+python3 analysis/decision_replay.py \
+	--sqlite /tmp/autoscaler/audit.db \
+	--cycle-id 42 \
+	--output reports/decision_replay_cycle_42.md
+```
+
+The replay output summarizes end-to-end decision path for one cycle:
+
+- metrics snapshot
+- per-agent votes
+- aggregation scores and selected action
+- safety veto status
+- replica transition and final decision
 
 Optional export from Postgres sidecar to JSONL for the timeline/replay scripts:
 
