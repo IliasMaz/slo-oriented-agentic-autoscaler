@@ -63,3 +63,26 @@ def log_event(
     label = title or event
     message = f"[{label}] {json.dumps(payload, ensure_ascii=True, default=str)}"
     logger.info(message)
+
+
+def _format_key_values(**fields) -> str:
+    if not fields:
+        return ""
+    parts = [
+        f"{key}={json.dumps(value, ensure_ascii=True, default=str)}"
+        for key, value in fields.items()
+    ]
+    return " | " + " ".join(parts)
+
+
+def log_human(
+    logger: logging.Logger,
+    stage: str,
+    message: str,
+    cycle_id: int | None = None,
+    **fields,
+) -> None:
+    """Log one human-readable line for easy run tracing."""
+    cycle_tag = f"cycle={cycle_id}" if cycle_id is not None else "cycle=-"
+    suffix = _format_key_values(**fields)
+    logger.info(f"[{stage}] {cycle_tag} {message}{suffix}")

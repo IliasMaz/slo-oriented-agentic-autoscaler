@@ -11,13 +11,18 @@
 
 import threading
 import time
-from collections import Counter
+from collections import Counter as VoteCounter
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Response
-from prometheus_client import CONTENT_TYPE_LATEST, Counter, Gauge, generate_latest
+from prometheus_client import (
+    CONTENT_TYPE_LATEST,
+    Counter as PrometheusCounter,
+    Gauge,
+    generate_latest,
+)
 
-from channel_logging import get_channel_logger, log_event
+from channel_logging import get_channel_logger, log_event, log_human
 from config import POLL_INTERVAL_SECONDS
 from kubernetes_api import load_cluster_config
 from runner import GraphRunner
@@ -35,8 +40,9 @@ runner = GraphRunner()
 
 errors_log = get_channel_logger("errors")
 lifecycle_log = get_channel_logger("lifecycle")
+timeline_log = get_channel_logger("timeline")
 
-AUTOSCALER_DECISIONS_TOTAL = Counter(
+AUTOSCALER_DECISIONS_TOTAL = PrometheusCounter(
     "autoscaler_decisions_total",
     "Total decisions by action and veto state",
     ["action", "veto"],
@@ -75,11 +81,22 @@ def control_loop():
         title="lifecycle:initialized",
         poll_interval_seconds=POLL_INTERVAL_SECONDS,
     )
+    log_human(
+        timeline_log,
+        "run",
+        "Autoscaler control loop initialized",
+        poll_interval_seconds=POLL_INTERVAL_SECONDS,
+    )
     load_cluster_config()
     log_event(
         lifecycle_log,
         "cluster_config_loaded",
         title="lifecycle:cluster_config_loaded",
+    )
+    log_human(
+        timeline_log,
+        "run",
+        "Kubernetes cluster config loaded",
     )
 
     cycle_id = 0
@@ -92,6 +109,12 @@ def control_loop():
             title=f"lifecycle:cycle_start:{cycle_id}",
             cycle_id=cycle_id,
         )
+        log_human(
+            timeline_log,
+            "cycle",
+            "Cycle started",
+            cycle_id=cycle_id,
+        )
         try:
             result = runner.run_once(cycle_id=cycle_id)
 
@@ -101,7 +124,7 @@ def control_loop():
             desired_replicas = final_decision.desired_replicas
             delta = desired_replicas - current_replicas
             vote_counts = dict(
-                Counter(r.action for r in result["agent_recommendations"])
+                VoteCounter(r.action for r in result["agent_recommendations"])
             )
             votes_by_agent = {
                 r.agent_name: r.action for r in result["agent_recommendations"]
@@ -139,12 +162,31 @@ def control_loop():
                 error_rate=snapshot.error_rate,
                 inprogress=snapshot.inprogress,
             )
+            log_human(
+                timeline_log,
+                "cycle",
+                "Cycle completed",
+                cycle_id=cycle_id,
+                final_action=final_decision.action,
+                desired_replicas=final_decision.desired_replicas,
+                current_replicas=current_replicas,
+                delta=delta,
+                scaled=result.get("scaled", False),
+                veto_applied=final_decision.veto_applied,
+            )
 
         except Exception as exc:
             log_event(
                 errors_log,
                 "cycle_error",
                 title=f"errors:cycle:{cycle_id}",
+                cycle_id=cycle_id,
+                error=str(exc),
+            )
+            log_human(
+                timeline_log,
+                "error",
+                "Cycle failed",
                 cycle_id=cycle_id,
                 error=str(exc),
             )

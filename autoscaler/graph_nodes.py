@@ -3,7 +3,7 @@ from collections import Counter
 from agents import run_agents
 from arbitration import arbitrate
 from audit import write_audit_line
-from channel_logging import get_channel_logger, log_event
+from channel_logging import get_channel_logger, log_event, log_human
 from config import TARGET_DEPLOYMENT, TARGET_NAMESPACE
 from graph_state import AutoscalerState
 from kubernetes_api import get_current_replicas, set_replicas
@@ -19,6 +19,7 @@ arbitration_log = get_channel_logger("arbitration")
 safety_log = get_channel_logger("safety")
 scaling_log = get_channel_logger("scaling")
 audit_log = get_channel_logger("audit")
+timeline_log = get_channel_logger("timeline")
 
 
 def fetch_metrics_node(state: AutoscalerState) -> dict:
@@ -28,12 +29,21 @@ def fetch_metrics_node(state: AutoscalerState) -> dict:
     and then queries Prometheus for the latest metrics.
     Returns a dictionary containing the current replicas and the metrics snapshot.
     """
+    cycle_id = state.get("cycle_id")
+    log_human(
+        timeline_log,
+        "metrics",
+        "Kubernetes replica read and Prometheus scrape started",
+        cycle_id=cycle_id,
+        namespace=TARGET_NAMESPACE,
+        deployment=TARGET_DEPLOYMENT,
+    )
+
     current_replicas = get_current_replicas(
         namespace=TARGET_NAMESPACE,
         deployment=TARGET_DEPLOYMENT,
     )
     snapshot = build_snapshot(current_replicas=current_replicas)
-    cycle_id = state.get("cycle_id")
 
     log_event(
         metrics_log,
@@ -44,6 +54,17 @@ def fetch_metrics_node(state: AutoscalerState) -> dict:
         rps=snapshot.rps,
         p95_latency=snapshot.p95_latency,
         error_rate=snapshot.error_rate,
+        inprogress=snapshot.inprogress,
+    )
+    log_human(
+        timeline_log,
+        "metrics",
+        "Prometheus scrape completed",
+        cycle_id=cycle_id,
+        current_replicas=current_replicas,
+        rps=round(snapshot.rps, 3),
+        p95_latency=round(snapshot.p95_latency, 3),
+        error_rate=round(snapshot.error_rate, 5),
         inprogress=snapshot.inprogress,
     )
 
@@ -77,6 +98,18 @@ def run_agents_node(state: AutoscalerState) -> dict:
         votes_by_agent=votes_by_agent,
         vote_counts=vote_counts,
     )
+    votes_summary = ", ".join(
+        f"{rec.agent_name}->{rec.action}({rec.desired_replicas})"
+        for rec in recommendations
+    )
+    log_human(
+        timeline_log,
+        "agents",
+        "Agent decisions collected",
+        cycle_id=cycle_id,
+        vote_counts=vote_counts,
+        votes=votes_summary,
+    )
     return {"agent_recommendations": recommendations}
 
 
@@ -99,6 +132,15 @@ def arbitrate_node(state: AutoscalerState) -> dict:
         arbitration_log,
         "arbitration_selected",
         title=f"aggregation:final:{aggregate.action}",
+        cycle_id=cycle_id,
+        action=aggregate.action,
+        desired_replicas=aggregate.desired_replicas,
+        reason=aggregate.reason,
+    )
+    log_human(
+        timeline_log,
+        "aggregation",
+        "Weighted aggregation completed",
         cycle_id=cycle_id,
         action=aggregate.action,
         desired_replicas=aggregate.desired_replicas,
@@ -127,6 +169,20 @@ def apply_safety_node(state: AutoscalerState) -> dict:
         requested_action=state["aggregated_decision"].action,
         final_action=final_decision.action,
         veto_applied=final_decision.veto_applied,
+        triggered_rules=triggered,
+    )
+    safety_message = (
+        "Safety gate vetoed requested action"
+        if final_decision.veto_applied
+        else "Safety gate accepted requested action"
+    )
+    log_human(
+        timeline_log,
+        "safety",
+        safety_message,
+        cycle_id=cycle_id,
+        requested_action=state["aggregated_decision"].action,
+        final_action=final_decision.action,
         triggered_rules=triggered,
     )
     return {
@@ -171,6 +227,16 @@ def scale_node(state: AutoscalerState) -> dict:
             replicas=desired_replicas,
         )
         scaled = True
+        log_human(
+            timeline_log,
+            "kubernetes",
+            "Replica patch applied",
+            cycle_id=cycle_id,
+            deployment=TARGET_DEPLOYMENT,
+            from_replicas=current_replicas,
+            to_replicas=desired_replicas,
+            delta=delta,
+        )
 
     status = "applied" if scaled else "skipped"
     if not scaled and final_decision.veto_applied:
@@ -191,6 +257,18 @@ def scale_node(state: AutoscalerState) -> dict:
         delta=delta,
         veto_applied=final_decision.veto_applied,
     )
+    if not scaled:
+        log_human(
+            timeline_log,
+            "kubernetes",
+            "Replica patch skipped",
+            cycle_id=cycle_id,
+            status=status,
+            from_replicas=current_replicas,
+            to_replicas=desired_replicas,
+            delta=delta,
+            veto_applied=final_decision.veto_applied,
+        )
 
     return {"scaled": scaled}
 
@@ -220,6 +298,15 @@ def audit_node(state: AutoscalerState) -> dict:
         audit_log,
         "audit_payload_written",
         title="audit:cycle_written",
+        cycle_id=state.get("cycle_id"),
+        action=state["final_decision"].action,
+        desired_replicas=state["final_decision"].desired_replicas,
+        scaled=state.get("scaled", False),
+    )
+    log_human(
+        timeline_log,
+        "audit",
+        "Cycle audit payload persisted",
         cycle_id=state.get("cycle_id"),
         action=state["final_decision"].action,
         desired_replicas=state["final_decision"].desired_replicas,
