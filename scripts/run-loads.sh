@@ -18,16 +18,18 @@ append_profile_jsonl() {
   local exit_code_value="$5"
   local summary_path_value="$6"
   local log_path_value="$7"
+  local start_replicas_value="$8"
+  local timeline_log_path_value="$9"
   local ts
 
   ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
   if [ -n "$summary_path_value" ]; then
-    printf '{"ts":"%s","event":"%s","profile":"%s","dry_run":%s,"exit_code":%s,"summary_path":"%s","log_path":"%s"}\n' \
-      "$ts" "$event" "$profile" "$dry_run_value" "$exit_code_value" "$summary_path_value" "$log_path_value" >> "$jsonl_path"
+    printf '{"ts":"%s","event":"%s","profile":"%s","dry_run":%s,"exit_code":%s,"summary_path":"%s","log_path":"%s","start_replicas":"%s","autoscaler_timeline_log":"%s"}\n' \
+      "$ts" "$event" "$profile" "$dry_run_value" "$exit_code_value" "$summary_path_value" "$log_path_value" "$start_replicas_value" "$timeline_log_path_value" >> "$jsonl_path"
   else
-    printf '{"ts":"%s","event":"%s","profile":"%s","dry_run":%s,"exit_code":%s,"summary_path":null,"log_path":"%s"}\n' \
-      "$ts" "$event" "$profile" "$dry_run_value" "$exit_code_value" "$log_path_value" >> "$jsonl_path"
+    printf '{"ts":"%s","event":"%s","profile":"%s","dry_run":%s,"exit_code":%s,"summary_path":null,"log_path":"%s","start_replicas":"%s","autoscaler_timeline_log":"%s"}\n' \
+      "$ts" "$event" "$profile" "$dry_run_value" "$exit_code_value" "$log_path_value" "$start_replicas_value" "$timeline_log_path_value" >> "$jsonl_path"
   fi
 }
 
@@ -40,7 +42,7 @@ Options:
   --interactive     Pick load profiles from a terminal menu.
   --parallel        Run selected profiles in parallel.
   --all             Run all profiles from load/*.js (default if no profiles provided).
-  --out-dir DIR     Base output directory (default: results).
+  --out-dir DIR     Base output directory (default: artifacts/runs).
   --dry-run         Validate/inspect scripts and create run folder without executing k6 load.
   -h, --help        Show this help message.
 
@@ -62,7 +64,7 @@ parallel_mode=0
 run_all=0
 dry_run=0
 interactive_mode=0
-output_base="results"
+output_base="artifacts/runs"
 
 declare -a requested_profiles=()
 declare -a available_profiles=()
@@ -91,6 +93,17 @@ add_unique_profile() {
     done
   fi
   requested_profiles+=("$target")
+}
+
+detect_start_replicas() {
+  if ! command -v kubectl >/dev/null 2>&1; then
+    echo "unknown"
+    return 0
+  fi
+
+  kubectl get deployment demo-app \
+    -n thesis-autoscaling \
+    -o jsonpath='{.spec.replicas}' 2>/dev/null || echo "unknown"
 }
 
 interactive_pick_profiles() {
@@ -230,7 +243,8 @@ done
 timestamp="$(date +%Y%m%d_%H%M%S)"
 run_dir="${output_base}/load_runs_${timestamp}"
 json_dir="${run_dir}/json"
-log_dir="storage/logs/load_runs_${timestamp}"
+log_dir="artifacts/logs/load_runs_${timestamp}"
+autoscaler_timeline_log="artifacts/logs/autoscaler/timeline.log"
 mkdir -p "$json_dir" "$log_dir"
 
 status_file="${run_dir}/status.txt"
@@ -250,26 +264,37 @@ run_one() {
   local summary_path="${json_dir}/${profile}_summary.json"
   local log_path="${log_dir}/${profile}.log"
   local jsonl_path="${log_dir}/${profile}.jsonl"
-  stage_log "profile_start" "profile=${profile} dry_run=${dry_run}"
-  append_profile_jsonl "$jsonl_path" "profile_start" "$profile" "$dry_run" "-1" "" "$log_path"
+  local start_replicas
+  local started_at_utc
+
+  start_replicas="$(detect_start_replicas)"
+  started_at_utc="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+  stage_log "profile_start" "profile=${profile} dry_run=${dry_run} start_replicas=${start_replicas}"
+  {
+    echo "[run] profile=${profile} started_at=${started_at_utc} start_replicas=${start_replicas}"
+    echo "[run] autoscaler_timeline_log=${autoscaler_timeline_log}"
+    echo
+  } > "$log_path"
+  append_profile_jsonl "$jsonl_path" "profile_start" "$profile" "$dry_run" "-1" "" "$log_path" "$start_replicas" "$autoscaler_timeline_log"
 
   if [ "$dry_run" -eq 1 ]; then
     {
       echo "[dry-run] Inspecting load/${profile}.js"
       k6 inspect "load/${profile}.js"
-    } > "$log_path" 2>&1
+    } >> "$log_path" 2>&1
     local exit_code=$?
     printf '%s exit_code=%s\n' "$profile" "$exit_code" >> "$status_file"
     stage_log "profile_end" "profile=${profile} exit_code=${exit_code} log=${log_path}"
-    append_profile_jsonl "$jsonl_path" "profile_end" "$profile" "$dry_run" "$exit_code" "" "$log_path"
+    append_profile_jsonl "$jsonl_path" "profile_end" "$profile" "$dry_run" "$exit_code" "" "$log_path" "$start_replicas" "$autoscaler_timeline_log"
     return "$exit_code"
   fi
 
-  k6 run "load/${profile}.js" --summary-export "$summary_path" > "$log_path" 2>&1
+  k6 run "load/${profile}.js" --summary-export "$summary_path" >> "$log_path" 2>&1
   local exit_code=$?
   printf '%s exit_code=%s\n' "$profile" "$exit_code" >> "$status_file"
   stage_log "profile_end" "profile=${profile} exit_code=${exit_code} summary=${summary_path} log=${log_path}"
-  append_profile_jsonl "$jsonl_path" "profile_end" "$profile" "$dry_run" "$exit_code" "$summary_path" "$log_path"
+  append_profile_jsonl "$jsonl_path" "profile_end" "$profile" "$dry_run" "$exit_code" "$summary_path" "$log_path" "$start_replicas" "$autoscaler_timeline_log"
   return "$exit_code"
 }
 
@@ -320,5 +345,6 @@ echo "Artifacts:"
 echo "- Status: ${status_file}"
 echo "- JSON summaries: ${json_dir}"
 echo "- Logs: ${log_dir}"
+echo "- Autoscaler decision flow: ${autoscaler_timeline_log}"
 
 exit "$overall_exit"
