@@ -11,6 +11,7 @@
 
 import threading
 import time
+import traceback
 from collections import Counter as VoteCounter
 from contextlib import asynccontextmanager
 
@@ -22,7 +23,12 @@ from prometheus_client import (
     generate_latest,
 )
 
-from channel_logging import get_channel_logger, log_event, log_human
+from channel_logging import (
+    get_channel_logger,
+    log_event,
+    log_exception,
+    log_human,
+)
 from config import POLL_INTERVAL_SECONDS
 from kubernetes_api import load_cluster_config
 from runner import GraphRunner
@@ -176,6 +182,7 @@ def control_loop():
             )
 
         except Exception as exc:
+            tb_text = traceback.format_exc()
             log_event(
                 errors_log,
                 "cycle_error",
@@ -183,11 +190,19 @@ def control_loop():
                 cycle_id=cycle_id,
                 error=str(exc),
             )
+            log_exception(
+                errors_log,
+                stage="control_loop",
+                cycle_id=cycle_id,
+                exc=exc,
+                traceback_text=tb_text,
+            )
             log_human(
                 timeline_log,
                 "error",
                 "Cycle failed",
                 cycle_id=cycle_id,
+                error_type=type(exc).__name__,
                 error=str(exc),
             )
 

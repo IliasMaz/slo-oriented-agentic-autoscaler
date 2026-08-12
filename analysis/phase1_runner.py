@@ -21,7 +21,7 @@ def main() -> None:
     parser.add_argument("--candidate", required=True, help="k6 candidate summary JSON")
     parser.add_argument("--baseline", required=True, help="k6 baseline summary JSON")
     parser.add_argument("--jsonl", required=True, help="Audit payloads JSONL")
-    parser.add_argument("--output-dir", default="artifacts", help="Output directory")
+    parser.add_argument("--output-dir", default="storage", help="Output directory")
     args = parser.parse_args()
 
     output_dir = Path(args.output_dir)

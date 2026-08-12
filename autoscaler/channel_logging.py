@@ -12,10 +12,31 @@ from config import LOG_BACKUP_COUNT, LOG_DIR, LOG_LEVEL, LOG_MAX_BYTES
 
 
 _CHANNEL_CACHE: dict[str, logging.Logger] = {}
+_CONTROL_HANDLER: RotatingFileHandler | None = None
 
 
 def _normalize_level(level_name: str) -> int:
     return getattr(logging, level_name.upper(), logging.INFO)
+
+
+def _get_control_handler() -> RotatingFileHandler:
+    global _CONTROL_HANDLER
+    if _CONTROL_HANDLER is not None:
+        return _CONTROL_HANDLER
+
+    control_path = os.path.join(LOG_DIR, "control.log")
+    handler = RotatingFileHandler(
+        control_path,
+        maxBytes=LOG_MAX_BYTES,
+        backupCount=LOG_BACKUP_COUNT,
+        encoding="utf-8",
+    )
+    formatter = logging.Formatter(
+        "%(asctime)s %(levelname)s %(name)s %(message)s"
+    )
+    handler.setFormatter(formatter)
+    _CONTROL_HANDLER = handler
+    return handler
 
 
 def get_channel_logger(channel: str) -> logging.Logger:
@@ -43,6 +64,7 @@ def get_channel_logger(channel: str) -> logging.Logger:
         )
         handler.setFormatter(formatter)
         logger.addHandler(handler)
+        logger.addHandler(_get_control_handler())
 
     _CHANNEL_CACHE[channel] = logger
     return logger
@@ -86,3 +108,22 @@ def log_human(
     cycle_tag = f"cycle={cycle_id}" if cycle_id is not None else "cycle=-"
     suffix = _format_key_values(**fields)
     logger.info(f"[{stage}] {cycle_tag} {message}{suffix}")
+
+
+def log_exception(
+    logger: logging.Logger,
+    stage: str,
+    cycle_id: int | None,
+    exc: Exception,
+    traceback_text: str,
+) -> None:
+    """Log a full exception payload that stays visible in .log files."""
+    log_event(
+        logger,
+        "exception",
+        title=f"exception:{stage}",
+        cycle_id=cycle_id,
+        error_type=type(exc).__name__,
+        error=str(exc),
+        traceback=traceback_text,
+    )

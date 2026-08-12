@@ -64,6 +64,8 @@ spec:
               value: "0.85"
             - name: AUDIT_LOG_PATH
               value: "/tmp/autoscaler/audit.jsonl"
+            - name: LOG_DIR
+              value: "storage/logs/autoscaler"
             - name: AUDIT_DB_BACKEND
               value: "postgres"
             - name: AUDIT_DB_PATH
