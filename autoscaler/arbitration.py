@@ -90,6 +90,10 @@ def compute_action_score(
     factor = action_effect(action)
     desired_replicas = desired_replicas_for_action(metrics, action)
     per_replica_rps = metrics.rps / max(metrics.current_replicas, 1)
+    throughput_pressure = max(0.0, per_replica_rps / max(PER_REPLICA_RPS_THRESHOLD, 1e-9) - 1.0)
+    scale_up_confidence = sum(
+        rec.confidence for rec in recommendations if rec.action == "scale_up"
+    )
 
     latency_penalty = (
         normalize_ratio(metrics.p95_latency, LATENCY_P95_THRESHOLD) * factor
@@ -112,6 +116,17 @@ def compute_action_score(
         cost_penalty = normalize_cost(desired_replicas)
 
     agent_penalty = disagreement_penalty(action, recommendations)
+
+    if action == "hold":
+        # Holding while throughput is clearly above target is a costly decision.
+        # This prevents burst pressure from being suppressed by the minimum-penalty tie-break.
+        throughput_penalty += 1.5 * throughput_pressure
+        cost_penalty += 0.5 * throughput_pressure
+        agent_penalty += 0.25 * min(scale_up_confidence, 1.0)
+    elif action == "scale_up":
+        # Prefer scale-up when the throughput signal is strong and a scale-up vote exists.
+        throughput_penalty -= 0.35 * throughput_pressure
+        cost_penalty -= 0.2 * min(scale_up_confidence, 1.0)
 
     total_score = (
         WEIGHT_LATENCY * latency_penalty
