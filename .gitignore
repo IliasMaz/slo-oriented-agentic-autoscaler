@@ -29,7 +29,7 @@ ENV/
 .idea/
 
 # Generated experiment outputs
-artifacts/
+storage/
 
 
 # Misc logs
@@ -39,3 +39,4 @@ artifacts/
 # Local notes
 *.local.md
 docs.local/
+documentation/
