@@ -30,7 +30,8 @@ ENV/
 
 # Generated experiment outputs
 storage/
-
+!storage/
+!storage/**/
 
 # Misc logs
 *.log
