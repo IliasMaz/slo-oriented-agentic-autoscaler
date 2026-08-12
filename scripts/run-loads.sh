@@ -2,6 +2,8 @@
 
 set -uo pipefail
 
+AGGREGATE_LOG_FILE=""
+
 stage_log() {
   local stage="$1"
   shift
@@ -42,7 +44,7 @@ Options:
   --interactive     Pick load profiles from a terminal menu.
   --parallel        Run selected profiles in parallel.
   --all             Run all profiles from load/*.js (default if no profiles provided).
-  --out-dir DIR     Base output directory (default: artifacts/runs).
+  --out-dir DIR     Base output directory (default: storage/runs).
   --dry-run         Validate/inspect scripts and create run folder without executing k6 load.
   -h, --help        Show this help message.
 
@@ -64,7 +66,7 @@ parallel_mode=0
 run_all=0
 dry_run=0
 interactive_mode=0
-output_base="artifacts/runs"
+output_base="storage/runs"
 
 declare -a requested_profiles=()
 declare -a available_profiles=()
@@ -104,6 +106,216 @@ detect_start_replicas() {
   kubectl get deployment demo-app \
     -n thesis-autoscaling \
     -o jsonpath='{.spec.replicas}' 2>/dev/null || echo "unknown"
+}
+
+append_autoscaler_diagnostics() {
+  local log_path="$1"
+
+  if ! command -v kubectl >/dev/null 2>&1; then
+    {
+      echo
+      echo "[autoscaler-check] kubectl unavailable, skipped diagnostics"
+    } >> "$log_path"
+    return 0
+  fi
+
+  local recent_errors
+  recent_errors="$(kubectl logs deployment/agent-autoscaler -n thesis-autoscaling -c agent-autoscaler --since=5m 2>/dev/null | grep -E 'cycle_error|exception:control_loop|Cycle failed|Traceback' | tail -n 30 || true)"
+
+  {
+    echo
+    echo "[autoscaler-check] recent control-loop diagnostics"
+    if [ -n "$recent_errors" ]; then
+      echo "[autoscaler-check] WARNING: recent autoscaler errors detected"
+      echo "$recent_errors"
+    else
+      echo "[autoscaler-check] OK: no recent control-loop errors in last 5m"
+    fi
+  } >> "$log_path"
+}
+
+append_system_health_status() {
+  local output_log="$1"
+  local ts
+  ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+  if ! command -v kubectl >/dev/null 2>&1; then
+    {
+      echo "[system] ts=${ts} status=SYSTEM_ERROR reason=kubectl_unavailable"
+    } >> "$output_log"
+    return 0
+  fi
+
+  local app_ready
+  local app_spec
+  local auto_ready
+  local auto_spec
+  local status="SYSTEM_OK"
+  local reason="all_checks_passed"
+
+  app_ready="$(kubectl get deploy demo-app -n thesis-autoscaling -o jsonpath='{.status.readyReplicas}' 2>/dev/null || echo "")"
+  app_spec="$(kubectl get deploy demo-app -n thesis-autoscaling -o jsonpath='{.spec.replicas}' 2>/dev/null || echo "")"
+  auto_ready="$(kubectl get deploy agent-autoscaler -n thesis-autoscaling -o jsonpath='{.status.readyReplicas}' 2>/dev/null || echo "")"
+  auto_spec="$(kubectl get deploy agent-autoscaler -n thesis-autoscaling -o jsonpath='{.spec.replicas}' 2>/dev/null || echo "")"
+
+  if [ -z "$app_spec" ] || [ -z "$auto_spec" ]; then
+    status="SYSTEM_ERROR"
+    reason="deployment_query_failed"
+  elif [ "${app_ready:-0}" -lt "${app_spec:-0}" ] || [ "${auto_ready:-0}" -lt "${auto_spec:-0}" ]; then
+    status="SYSTEM_ERROR"
+    reason="deployment_not_ready"
+  fi
+
+  local recent_errors
+  recent_errors="$(kubectl logs deployment/agent-autoscaler -n thesis-autoscaling -c agent-autoscaler --since=5m 2>/dev/null | grep -E 'cycle_error|exception:control_loop|Cycle failed|Traceback' | tail -n 20 || true)"
+  if [ -n "$recent_errors" ]; then
+    status="SYSTEM_ERROR"
+    reason="autoscaler_runtime_errors"
+  fi
+
+  {
+    echo "[system] ts=${ts} status=${status} reason=${reason} app_ready=${app_ready:-0}/${app_spec:-0} autoscaler_ready=${auto_ready:-0}/${auto_spec:-0}"
+    if [ -n "$recent_errors" ]; then
+      echo "[system] recent_autoscaler_errors_start"
+      echo "$recent_errors"
+      echo "[system] recent_autoscaler_errors_end"
+    fi
+  } >> "$output_log"
+}
+
+get_autoscaler_pod() {
+  if ! command -v kubectl >/dev/null 2>&1; then
+    echo ""
+    return 0
+  fi
+  kubectl get pod -n thesis-autoscaling -l app=agent-autoscaler -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo ""
+}
+
+get_control_log_offset() {
+  local pod
+  pod="$(get_autoscaler_pod)"
+  if [ -z "$pod" ]; then
+    echo ""
+    return 0
+  fi
+
+  kubectl exec -n thesis-autoscaling "$pod" -c agent-autoscaler -- sh -c 'wc -c < /service/storage/logs/autoscaler/control.log' 2>/dev/null | tr -d '[:space:]'
+}
+
+capture_control_log_window() {
+  local start_offset="$1"
+  local output_file="$2"
+  local pod
+  local end_offset
+
+  pod="$(get_autoscaler_pod)"
+  if [ -z "$pod" ]; then
+    echo "[aggregate] autoscaler pod not found" >> "$output_file"
+    return 0
+  fi
+
+  end_offset="$(kubectl exec -n thesis-autoscaling "$pod" -c agent-autoscaler -- sh -c 'wc -c < /service/storage/logs/autoscaler/control.log' 2>/dev/null | tr -d '[:space:]')"
+
+  if [ -z "$start_offset" ] || [ -z "$end_offset" ]; then
+    echo "[aggregate] control.log offsets unavailable" >> "$output_file"
+    return 0
+  fi
+
+  if [ "$end_offset" -le "$start_offset" ]; then
+    echo "[aggregate] no new autoscaler control.log content during profile window" >> "$output_file"
+    return 0
+  fi
+
+  kubectl exec -n thesis-autoscaling "$pod" -c agent-autoscaler -- sh -c "tail -c +$((start_offset + 1)) /service/storage/logs/autoscaler/control.log" 2>/dev/null >> "$output_file" || {
+    echo "[aggregate] failed to read control.log window" >> "$output_file"
+    return 0
+  }
+}
+
+append_story_from_window() {
+  local profile="$1"
+  local window_file="$2"
+  local output_file="$3"
+  local dry_run_value="$4"
+  local start_offset="$5"
+  local timeline_events
+  local control_events
+
+  {
+    echo "[story] chapter_start profile=${profile}"
+    echo "[story] context dry_run=${dry_run_value} control_log_start_offset=${start_offset:-unknown}"
+  } >> "$output_file"
+
+  timeline_events="$(grep 'autoscaler\.timeline' "$window_file" || true)"
+
+  if [ -n "$timeline_events" ]; then
+    {
+      echo "[story] source=timeline"
+      echo "$timeline_events" | \
+        sed -E 's/^([0-9-]+ [0-9:,]+) INFO autoscaler\.timeline \[([^]]+)\] cycle=([^ ]+) (.*)$/[story] ts=\1 cycle=\3 stage=\2 message=\4/'
+    } >> "$output_file"
+  else
+    control_events="$(grep -E 'lifecycle:cycle_start|metrics:snapshot|agents:aggregate_votes|aggregation:final|safety:|replicas:|lifecycle:cycle_end|errors:cycle:|exception:control_loop' "$window_file" || true)"
+    {
+      if [ -n "$control_events" ]; then
+        echo "[story] source=control_events"
+        echo "$control_events" | \
+          sed -E 's/^([0-9-]+ [0-9:,]+) INFO autoscaler\.[^.]+ \[(.*)\] (.*)$/[story] ts=\1 event=\2 details=\3/'
+      else
+        echo "[story] source=none"
+        echo "[story] no_events_observed reason=no_autoscaler_control_log_delta"
+      fi
+    } >> "$output_file"
+  fi
+
+  {
+    echo "[story] chapter_end profile=${profile}"
+  } >> "$output_file"
+}
+
+append_aggregate_autoscaler_window() {
+  local profile="$1"
+  local start_offset="$2"
+  local profile_log="$3"
+  local ts
+  local window_file
+  local key_summary
+
+  ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  window_file="$(mktemp "${TMPDIR:-/tmp}/autoscaler-window.XXXXXX")"
+
+  capture_control_log_window "$start_offset" "$window_file"
+
+  {
+    echo
+    echo "[aggregate] ts=${ts} profile=${profile}"
+    if grep -Eq 'errors:cycle:|exception:control_loop|\\[error\\] cycle=|Traceback' "$window_file"; then
+      echo "[aggregate] status=SYSTEM_ERROR reason=autoscaler_runtime_failure"
+      echo "[aggregate] error_context_start"
+      cat "$window_file"
+      echo "[aggregate] error_context_end"
+    else
+      echo "[aggregate] status=SYSTEM_OK reason=no_runtime_failure"
+      key_summary="$(grep -E 'metrics:snapshot|agents:aggregate_votes|aggregation:final|safety:|replicas:|lifecycle:cycle_end' "$window_file" || true)"
+      if [ -n "$key_summary" ]; then
+        echo "[aggregate] decision_summary_start"
+        echo "$key_summary"
+        echo "[aggregate] decision_summary_end"
+      else
+        echo "[aggregate] decision_summary_empty"
+      fi
+    fi
+  } >> "$AGGREGATE_LOG_FILE"
+
+  append_story_from_window "$profile" "$window_file" "$AGGREGATE_LOG_FILE" "$dry_run" "$start_offset"
+
+  {
+    echo
+    echo "[run] aggregate_log=${AGGREGATE_LOG_FILE}"
+    tail -n 120 "$AGGREGATE_LOG_FILE"
+  } >> "$profile_log"
+
+  rm -f "$window_file"
 }
 
 interactive_pick_profiles() {
@@ -243,9 +455,15 @@ done
 timestamp="$(date +%Y%m%d_%H%M%S)"
 run_dir="${output_base}/load_runs_${timestamp}"
 json_dir="${run_dir}/json"
-log_dir="artifacts/logs/load_runs_${timestamp}"
-autoscaler_timeline_log="artifacts/logs/autoscaler/timeline.log"
+log_dir="storage/logs/load_runs_${timestamp}"
+autoscaler_timeline_log="storage/logs/autoscaler/timeline.log"
 mkdir -p "$json_dir" "$log_dir"
+AGGREGATE_LOG_FILE="${log_dir}/autoscaler_aggregate.log"
+
+{
+  echo "[aggregate] started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ) run_dir=${run_dir}"
+  echo "[aggregate] profiles=${requested_profiles[*]} dry_run=${dry_run} parallel=${parallel_mode}"
+} > "$AGGREGATE_LOG_FILE"
 
 status_file="${run_dir}/status.txt"
 
@@ -258,6 +476,7 @@ status_file="${run_dir}/status.txt"
 
 echo "Run directory: $run_dir"
 stage_log "initialized" "run_dir=${run_dir} parallel=${parallel_mode} dry_run=${dry_run} profiles=${requested_profiles[*]}"
+append_system_health_status "$AGGREGATE_LOG_FILE"
 
 run_one() {
   local profile="$1"
@@ -266,16 +485,21 @@ run_one() {
   local jsonl_path="${log_dir}/${profile}.jsonl"
   local start_replicas
   local started_at_utc
+  local control_log_start_offset
 
   start_replicas="$(detect_start_replicas)"
   started_at_utc="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  control_log_start_offset="$(get_control_log_offset)"
 
   stage_log "profile_start" "profile=${profile} dry_run=${dry_run} start_replicas=${start_replicas}"
   {
     echo "[run] profile=${profile} started_at=${started_at_utc} start_replicas=${start_replicas}"
     echo "[run] autoscaler_timeline_log=${autoscaler_timeline_log}"
+    echo "[run] aggregate_log=${AGGREGATE_LOG_FILE}"
+    echo "[run] control_log_start_offset=${control_log_start_offset:-unknown}"
     echo
   } > "$log_path"
+  append_system_health_status "$AGGREGATE_LOG_FILE"
   append_profile_jsonl "$jsonl_path" "profile_start" "$profile" "$dry_run" "-1" "" "$log_path" "$start_replicas" "$autoscaler_timeline_log"
 
   if [ "$dry_run" -eq 1 ]; then
@@ -284,6 +508,8 @@ run_one() {
       k6 inspect "load/${profile}.js"
     } >> "$log_path" 2>&1
     local exit_code=$?
+    append_autoscaler_diagnostics "$log_path"
+    append_aggregate_autoscaler_window "$profile" "$control_log_start_offset" "$log_path"
     printf '%s exit_code=%s\n' "$profile" "$exit_code" >> "$status_file"
     stage_log "profile_end" "profile=${profile} exit_code=${exit_code} log=${log_path}"
     append_profile_jsonl "$jsonl_path" "profile_end" "$profile" "$dry_run" "$exit_code" "" "$log_path" "$start_replicas" "$autoscaler_timeline_log"
@@ -292,6 +518,8 @@ run_one() {
 
   k6 run "load/${profile}.js" --summary-export "$summary_path" >> "$log_path" 2>&1
   local exit_code=$?
+  append_autoscaler_diagnostics "$log_path"
+  append_aggregate_autoscaler_window "$profile" "$control_log_start_offset" "$log_path"
   printf '%s exit_code=%s\n' "$profile" "$exit_code" >> "$status_file"
   stage_log "profile_end" "profile=${profile} exit_code=${exit_code} summary=${summary_path} log=${log_path}"
   append_profile_jsonl "$jsonl_path" "profile_end" "$profile" "$dry_run" "$exit_code" "$summary_path" "$log_path" "$start_replicas" "$autoscaler_timeline_log"
@@ -341,10 +569,11 @@ fi
 
 stage_log "completed" "overall_exit=${overall_exit} status=${status_file} json_dir=${json_dir} log_dir=${log_dir}"
 
-echo "Artifacts:"
+echo "Storage:"
 echo "- Status: ${status_file}"
 echo "- JSON summaries: ${json_dir}"
 echo "- Logs: ${log_dir}"
 echo "- Autoscaler decision flow: ${autoscaler_timeline_log}"
+echo "- Autoscaler aggregate log: ${AGGREGATE_LOG_FILE}"
 
 exit "$overall_exit"
