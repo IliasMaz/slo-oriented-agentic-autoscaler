@@ -495,6 +495,8 @@ k6 run load/reality_simulation.js
 
 ## High-ROI Analysis Tooling (Phase 1 MVP)
 
+The repository includes the following analysis scripts under `analysis/`:
+
 ### 1) Policy benchmark scorecard
 
 Purpose:
@@ -512,7 +514,7 @@ throughput_component = min(iterations / 10000, 1) * 15
 score = error_component + p95_component + throughput_component
 ```
 
-This is implemented in `analysis/policy_benchmark.py` and exposed via:
+The script is implemented in `analysis/policy_benchmark.py` and can be run as:
 
 ```bash
 python3 analysis/policy_benchmark.py \
@@ -531,7 +533,7 @@ The result includes:
 - `p95_ms_delta_pct`
 - `iterations_delta_pct`
 
-This is the core mechanism for comparing policy variants across workload profiles.
+This is the comparison mechanism used for evaluating policy variants across workload profiles.
 
 ### 2) Run summary for each execution
 
@@ -572,15 +574,15 @@ python3 analysis/run_summary.py \
 	--output storage/json/run_summary.md
 ```
 
-This makes every run easy to read in a report, presentation, or commit review.
+This script produces a readable report for presentation, review, and follow-up analysis.
 
 ### 3) Bayesian-style policy optimizer
 
 Purpose:
 
-- automatically search over weight profiles
+- search over weight profiles
 - optimize for a better cost/SLO/stability trade-off
-- choose a better arbitration policy without manual guessing
+- support policy tuning without manual guessing
 
 The optimization layer is intentionally lightweight rather than a heavy ML stack. It searches candidate weight sets around the current best policy and scores them against the runtime objective.
 
@@ -593,7 +595,7 @@ objective = weight_latency * latency_term
           + weight_cost * (100 - cost_penalty)
 ```
 
-The optimizer keeps the candidate with the highest objective and mutates around it iteratively.
+The optimizer evaluates candidate profiles and keeps the one with the highest objective.
 
 Implementation:
 
@@ -605,7 +607,7 @@ python3 analysis/bayesian_optimizer.py \
 	--output storage/json/bayesian_policy_search.json
 ```
 
-This gives:
+The output includes:
 
 - `best_weights`
 - `best_objective`
@@ -613,7 +615,7 @@ This gives:
 - `baseline_score`
 - `comparison`
 
-This is the layer that turns the project from a fixed heuristic into a policy-tuning system.
+This is a lightweight tuning layer for the arbitration policy.
 
 ### 4) Baseline benchmark scorecard
 
@@ -671,7 +673,7 @@ python3 analysis/decision_replay.py \
 	--output docs.local/decision_replay_cycle_42.md
 ```
 
-The replay output summarizes end-to-end decision path for one cycle:
+The replay output summarizes an end-to-end decision path for one cycle:
 
 - metrics snapshot
 - per-agent votes
@@ -686,6 +688,37 @@ kubectl exec -n thesis-autoscaling deploy/agent-autoscaler -c audit-db -- \
 	psql -U autoscaler -d autoscaler -At -c "select payload_json::text from audit_events order by id desc limit 120" \
 	> /tmp/audit_payloads.jsonl
 ```
+
+## Output model and improvement backlog
+
+The repository uses three complementary layers of operational evidence:
+
+1. Raw logs
+   - capture the full execution trail
+   - used for forensic debugging and replay
+   - stored under `storage/logs/`
+
+2. Structured run artifacts
+   - contain the normalized metrics, events, and decision snapshots
+   - used for analysis and comparison
+   - stored under `storage/runs/<run_id>/` and `storage/json/`
+
+3. Human-readable summaries
+   - condense a run into understandable output for review and reporting
+   - not a replacement for the raw logs
+   - generated per run with the summary scripts in `analysis/`
+
+This separation is intentional: logs preserve evidence, summaries make the signal readable, and structured artifacts bridge the two.
+
+Current cleanup and improvement items:
+
+- keep one canonical output contract per run, including logs, structured JSON, and summary markdown
+- ensure run names and folders stay consistent across all artifacts
+- keep policy benchmark comparisons focused on a small set of canonical metrics
+- maintain a single clear distinction between permanent repo docs and local-only notes
+- expand the benchmark workflow into a repeatable multi-run comparison report
+
+This is the current backlog for making the project clearer and more consistent without losing forensic traceability.
 
 ## Results Folder
 
