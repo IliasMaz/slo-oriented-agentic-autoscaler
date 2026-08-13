@@ -4,7 +4,8 @@ try:
     HAS_START_END = True
 except ImportError:
     # Compatibility path for older/newer versions that do not expose START/END.
-    from langgraph.graph import StateGraph
+    StateGraph = None
+    END = START = None
     HAS_START_END = False
 
 from graph_nodes import (
@@ -17,6 +18,60 @@ from graph_nodes import (
 )
 from graph_state import AutoscalerState
 
+
+class _FallbackGraph:
+    """Minimal graph interface used when LangGraph is not installed."""
+
+    def __init__(self, state_schema=None):
+        self.state_schema = state_schema
+        self._nodes = {}
+        self._edges = []
+        self._entry = None
+        self._finish = None
+        self._execution_order = []
+
+    def add_node(self, name, fn):
+        self._nodes[name] = fn
+        if name not in self._execution_order:
+            self._execution_order.append(name)
+
+    def add_edge(self, src, dst):
+        self._edges.append((src, dst))
+
+    def set_entry_point(self, node):
+        self._entry = node
+
+    def set_finish_point(self, node):
+        self._finish = node
+
+    def compile(self):
+        return self
+
+    def invoke(self, state):
+        current = dict(state or {})
+        if self._entry is not None and self._entry not in self._nodes:
+            raise RuntimeError(f"Graph entry point {self._entry!r} is not defined")
+
+        if self._entry is not None:
+            ordered = [self._entry]
+            for node_name in self._execution_order:
+                if node_name != self._entry and node_name not in ordered:
+                    ordered.append(node_name)
+            for node_name in ordered:
+                node = self._nodes.get(node_name)
+                if node is None:
+                    continue
+                current.update(node(current))
+            return current
+
+        for node_name in self._execution_order:
+            node = self._nodes.get(node_name)
+            if node is None:
+                continue
+            current.update(node(current))
+        return current
+
+
 def build_graph():
     """
     Builds the state graph for the autoscaler.
@@ -24,7 +79,10 @@ def build_graph():
     The edges define the order of execution.
     """
 
-    graph = StateGraph(AutoscalerState)
+    if StateGraph is None:
+        graph = _FallbackGraph(AutoscalerState)
+    else:
+        graph = StateGraph(AutoscalerState)
 
     # Define nodes
     graph.add_node("fetch_metrics", fetch_metrics_node)
@@ -48,5 +106,8 @@ def build_graph():
     if HAS_START_END:
         graph.add_edge(START, "fetch_metrics")
         graph.add_edge("audit", END)
+
+    if StateGraph is None:
+        return graph.compile()
 
     return graph.compile()
