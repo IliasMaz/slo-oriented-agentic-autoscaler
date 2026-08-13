@@ -495,9 +495,127 @@ k6 run load/reality_simulation.js
 
 ## High-ROI Analysis Tooling (Phase 1 MVP)
 
-The repository now includes three analysis scripts under `analysis/`:
+### 1) Policy benchmark scorecard
 
-1. Baseline benchmark scorecard
+Purpose:
+
+- compare a candidate run against a baseline run
+- score reliability, latency, and throughput in one comparable metric
+- quantify whether a new policy is better or worse
+
+The benchmark logic is intentionally simple and transparent:
+
+```text
+error_component = max(0, 1 - failed_rate) * 50
+p95_component   = max(0, 1 - p95_ms / 2000) * 35
+throughput_component = min(iterations / 10000, 1) * 15
+score = error_component + p95_component + throughput_component
+```
+
+This is implemented in `analysis/policy_benchmark.py` and exposed via:
+
+```bash
+python3 analysis/policy_benchmark.py \
+	--candidate /tmp/k6-spike-summary.json \
+	--baseline /tmp/k6-sawtooth-summary.json \
+	--output storage/json/policy_benchmark_report.json
+```
+
+The result includes:
+
+- `candidate_score`
+- `baseline_score`
+- `score_delta`
+- `score_delta_pct`
+- `failed_rate_delta_pct`
+- `p95_ms_delta_pct`
+- `iterations_delta_pct`
+
+This is the core mechanism for comparing policy variants across workload profiles.
+
+### 2) Run summary for each execution
+
+Purpose:
+
+- summarize a run in a human-readable way
+- show the final action distribution for the run
+- show average footprint of the workload and the decision loop
+- highlight safety veto counts and agent activity
+
+The summary logic is implemented in `analysis/run_summary.py` and follows this structure:
+
+```python
+summary = {
+    "total_cycles": len(events),
+    "final_action_distribution": {"scale_up": x, "scale_down": y, "hold": z},
+    "avg_rps": ...,
+    "avg_latency": ...,
+    "avg_error_rate": ...,
+    "avg_inprogress": ...,
+    "veto_summary": {...},
+    "policy_summary": {...},
+}
+```
+
+The markdown output contains:
+
+- Final action distribution
+- Snapshot averages
+- Safety veto summary
+- Agent activity
+
+Example:
+
+```bash
+python3 analysis/run_summary.py \
+	--jsonl /tmp/audit_payloads.jsonl \
+	--output storage/json/run_summary.md
+```
+
+This makes every run easy to read in a report, presentation, or commit review.
+
+### 3) Bayesian-style policy optimizer
+
+Purpose:
+
+- automatically search over weight profiles
+- optimize for a better cost/SLO/stability trade-off
+- choose a better arbitration policy without manual guessing
+
+The optimization layer is intentionally lightweight rather than a heavy ML stack. It searches candidate weight sets around the current best policy and scores them against the runtime objective.
+
+Conceptually:
+
+```text
+objective = weight_latency * latency_term
+          + weight_error * reliability_term
+          + weight_throughput * throughput_term
+          + weight_cost * (100 - cost_penalty)
+```
+
+The optimizer keeps the candidate with the highest objective and mutates around it iteratively.
+
+Implementation:
+
+```bash
+python3 analysis/bayesian_optimizer.py \
+	--candidate /tmp/k6-spike-summary.json \
+	--baseline /tmp/k6-sawtooth-summary.json \
+	--iterations 25 \
+	--output storage/json/bayesian_policy_search.json
+```
+
+This gives:
+
+- `best_weights`
+- `best_objective`
+- `candidate_score`
+- `baseline_score`
+- `comparison`
+
+This is the layer that turns the project from a fixed heuristic into a policy-tuning system.
+
+### 4) Baseline benchmark scorecard
 
 ```bash
 python3 analysis/benchmark_scorecard.py \
@@ -506,16 +624,16 @@ python3 analysis/benchmark_scorecard.py \
 	--output storage/json/benchmark_scorecard_spike_vs_sawtooth.json
 ```
 
-2. Explainability timeline (read-only)
+### 5) Explainability timeline (read-only)
 
 ```bash
 python3 analysis/explainability_timeline.py \
 	--jsonl /tmp/audit_payloads.jsonl \
 	--limit 40 \
-	--output docs.local/explainability_timeline_latest.md
+	--output storage/json/explainability_timeline_latest.md
 ```
 
-3. Counterfactual replay MVP
+### 6) Counterfactual replay MVP
 
 ```bash
 python3 analysis/counterfactual_replay.py \
@@ -526,7 +644,7 @@ python3 analysis/counterfactual_replay.py \
 	--output storage/json/counterfactual_replay_summary.json
 ```
 
-4. Full phase runner (one command)
+### 7) Full phase runner (one command)
 
 ```bash
 python3 analysis/phase1_runner.py \
@@ -536,7 +654,7 @@ python3 analysis/phase1_runner.py \
 	--output-dir storage
 ```
 
-5. Decision replay (single cycle debugging)
+### 8) Decision replay (single cycle debugging)
 
 ```bash
 python3 analysis/decision_replay.py \
