@@ -76,15 +76,17 @@ def log_event(
     title: str | None = None,
     **fields,
 ) -> None:
-    """Log one structured event with a compact bracketed title.
+    """Log one structured event in a simple, timestamped, value-first format.
 
     Example output:
-    [error_agent:hold] {"event": "agent_recommendation", ...}
+    [event] - 2026-08-13T12:30:15Z | stage=arbitration | action=scale_up | reason=throughput_pressure
     """
-    payload = {"event": event, **fields}
     label = title or event
-    message = f"[{label}] {json.dumps(payload, ensure_ascii=True, default=str)}"
-    logger.info(message)
+    payload = {"event": event, **fields}
+    compact = " | ".join(
+        [f"{key}={json.dumps(value, ensure_ascii=True, default=str)}" for key, value in payload.items()]
+    )
+    logger.info(f"[{label}] - {compact}")
 
 
 def _format_key_values(**fields) -> str:
@@ -94,7 +96,7 @@ def _format_key_values(**fields) -> str:
         f"{key}={json.dumps(value, ensure_ascii=True, default=str)}"
         for key, value in fields.items()
     ]
-    return " | " + " ".join(parts)
+    return " | " + " | ".join(parts)
 
 
 def log_human(
@@ -104,10 +106,10 @@ def log_human(
     cycle_id: int | None = None,
     **fields,
 ) -> None:
-    """Log one human-readable line for easy run tracing."""
+    """Log a human-readable line that is easy to scan during a live run."""
     cycle_tag = f"cycle={cycle_id}" if cycle_id is not None else "cycle=-"
     suffix = _format_key_values(**fields)
-    logger.info(f"[{stage}] {cycle_tag} {message}{suffix}")
+    logger.info(f"[{stage}] - {cycle_tag} | {message}{suffix}")
 
 
 def log_exception(

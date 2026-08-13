@@ -107,7 +107,9 @@ class PolicyBenchmarkTest(unittest.TestCase):
         self.assertIn("scale_up", summary["final_action_distribution"])
         self.assertGreater(summary["avg_rps"], 0)
         self.assertIn("max_replica_guard", summary["veto_summary"])
-        self.assertIn("Final action distribution", markdown)
+        self.assertIn("## What happened", markdown)
+        self.assertIn("## What the system did", markdown)
+        self.assertIn("## Final takeaway", markdown)
         self.assertIn("scale_up", markdown)
 
 

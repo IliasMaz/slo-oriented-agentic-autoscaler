@@ -87,9 +87,15 @@ def build_run_summary_markdown(summary: dict) -> str:
     lines = [
         "# Run Summary",
         "",
-        f"- Total cycles: {summary.get('total_cycles', 0)}",
+        "## What happened",
         "",
-        "## Final action distribution",
+        f"- Total cycles: {summary.get('total_cycles', 0)}",
+        f"- Avg RPS: {summary.get('avg_rps', 0.0)}",
+        f"- Avg latency: {summary.get('avg_latency', 0.0)}",
+        f"- Avg error rate: {summary.get('avg_error_rate', 0.0)}",
+        f"- Avg inprogress: {summary.get('avg_inprogress', 0.0)}",
+        "",
+        "## What the system did",
         "",
     ]
 
@@ -97,32 +103,24 @@ def build_run_summary_markdown(summary: dict) -> str:
     for action in ["scale_up", "scale_down", "hold"]:
         lines.append(f"- {action}: {action_distribution.get(action, 0)}")
 
-    lines.extend([
-        "",
-        "## Snapshot averages",
-        "",
-        f"- Avg RPS: {summary.get('avg_rps', 0.0)}",
-        f"- Avg latency: {summary.get('avg_latency', 0.0)}",
-        f"- Avg error rate: {summary.get('avg_error_rate', 0.0)}",
-        f"- Avg inprogress: {summary.get('avg_inprogress', 0.0)}",
-        "",
-        "## Safety veto summary",
-        "",
-    ])
-
     veto_summary = summary.get("veto_summary", {})
+    lines.extend(["", "## Safety and vetoes", ""])
     if veto_summary:
         for name, count in veto_summary.items():
             lines.append(f"- {name}: {count}")
     else:
         lines.append("- No veto triggers recorded")
 
-    lines.extend(["", "## Agent activity", ""])
-    for agent, count in summary.get("policy_summary", {}).items():
-        lines.append(f"- {agent}: {count}")
-
-    if not summary.get("policy_summary"):
+    lines.extend(["", "## Why it matters", ""])
+    if summary.get("policy_summary"):
+        for agent, count in summary.get("policy_summary", {}).items():
+            lines.append(f"- {agent}: {count} recommendation events")
+    else:
         lines.append("- No agent recommendation data recorded")
+
+    lines.extend(["", "## Final takeaway", ""])
+    lines.append("- The run summary reflects the observed operating pattern and the final action decision.")
+    lines.append("- The actual raw log trail remains the source of truth for debugging and replay.")
 
     return "\n".join(lines) + "\n"
 
