@@ -35,6 +35,9 @@ def _extract_row(payload: dict) -> tuple:
     snapshot = payload.get("snapshot", {})
     final_decision = payload.get("final_decision", {})
     scaled = bool(payload.get("scaled", False))
+    run_id = payload.get("run_id")
+    profile_name = payload.get("profile_name")
+    cycle_id = payload.get("cycle_id")
 
     openai_recommendation = None
     for recommendation in payload.get("recommendations", []):
@@ -43,6 +46,9 @@ def _extract_row(payload: dict) -> tuple:
             break
 
     return (
+        run_id,
+        profile_name,
+        cycle_id,
         snapshot.get("timestamp_epoch"),
         final_decision.get("action"),
         final_decision.get("desired_replicas"),
@@ -69,6 +75,9 @@ def _ensure_sqlite_ready() -> None:
             CREATE TABLE IF NOT EXISTS audit_events (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                run_id TEXT,
+                profile_name TEXT,
+                cycle_id INTEGER,
                 timestamp_epoch REAL,
                 action TEXT,
                 desired_replicas INTEGER,
@@ -84,6 +93,15 @@ def _ensure_sqlite_ready() -> None:
                 payload_json TEXT NOT NULL
             )
             """
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_audit_events_created_at ON audit_events(created_at)"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_audit_events_run_cycle ON audit_events(run_id, cycle_id)"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_audit_events_action ON audit_events(action)"
         )
         connection.commit()
     finally:
@@ -109,6 +127,9 @@ def _ensure_postgres_ready() -> None:
                 CREATE TABLE IF NOT EXISTS audit_events (
                     id BIGSERIAL PRIMARY KEY,
                     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    run_id TEXT,
+                    profile_name TEXT,
+                    cycle_id INTEGER,
                     timestamp_epoch DOUBLE PRECISION,
                     action TEXT,
                     desired_replicas INTEGER,
@@ -124,6 +145,15 @@ def _ensure_postgres_ready() -> None:
                     payload_json JSONB NOT NULL
                 )
                 """
+            )
+            cursor.execute(
+                "CREATE INDEX IF NOT EXISTS idx_audit_events_created_at ON audit_events(created_at)"
+            )
+            cursor.execute(
+                "CREATE INDEX IF NOT EXISTS idx_audit_events_run_cycle ON audit_events(run_id, cycle_id)"
+            )
+            cursor.execute(
+                "CREATE INDEX IF NOT EXISTS idx_audit_events_action ON audit_events(action)"
             )
         connection.commit()
     finally:
@@ -156,6 +186,9 @@ def _write_audit_sqlite(payload: dict) -> None:
         connection.execute(
             """
             INSERT INTO audit_events (
+                run_id,
+                profile_name,
+                cycle_id,
                 timestamp_epoch,
                 action,
                 desired_replicas,
@@ -170,7 +203,7 @@ def _write_audit_sqlite(payload: dict) -> None:
                 openai_reason,
                 payload_json
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             row,
         )
@@ -197,6 +230,9 @@ def _write_audit_postgres(payload: dict) -> None:
             cursor.execute(
                 """
                 INSERT INTO audit_events (
+                    run_id,
+                    profile_name,
+                    cycle_id,
                     timestamp_epoch,
                     action,
                     desired_replicas,
@@ -211,7 +247,7 @@ def _write_audit_postgres(payload: dict) -> None:
                     openai_reason,
                     payload_json
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb)
                 """,
                 row,
             )
