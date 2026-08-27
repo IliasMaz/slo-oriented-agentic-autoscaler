@@ -1,5 +1,5 @@
 """Layer: decision-augmentation.
-OpenAI recommendation adapter
+AI recommendation adapter
 with budget telemetry.
 """
 
@@ -14,49 +14,49 @@ from config import (
     LATENCY_P95_THRESHOLD,
     MAX_REPLICAS,
     MIN_REPLICAS,
-    OPENAI_AGENT_ENABLED,
-    OPENAI_API_KEY,
-    OPENAI_INPUT_COST_PER_1M_TOKENS,
-    OPENAI_MAX_TOTAL_COST_USD,
-    OPENAI_MAX_TOTAL_TOKENS,
-    OPENAI_MODEL,
-    OPENAI_OUTPUT_COST_PER_1M_TOKENS,
-    OPENAI_TIMEOUT_SECONDS,
+    AI_AGENT_ENABLED,
+    AI_API_KEY,
+    AI_INPUT_COST_PER_1M_TOKENS,
+    AI_MAX_TOTAL_COST_USD,
+    AI_MAX_TOTAL_TOKENS,
+    AI_MODEL,
+    AI_OUTPUT_COST_PER_1M_TOKENS,
+    AI_TIMEOUT_SECONDS,
     PER_REPLICA_RPS_THRESHOLD,
 )
 
 from models import MetricsSnapshot, AgentRecommendation
 
 
-OPENAI_AGENT_REQUESTS_TOTAL = Counter(
-    "openai_agent_requests_total",
-    "Total OpenAI agent calls grouped by outcome",
+AI_AGENT_REQUESTS_TOTAL = Counter(
+    "ai_agent_requests_total",
+    "Total AI agent calls grouped by outcome",
     ["result"],
 )
 
-OPENAI_AGENT_PROMPT_TOKENS_TOTAL = Counter(
-    "openai_agent_prompt_tokens_total",
-    "Total prompt/input tokens consumed by OpenAI agent",
+AI_AGENT_PROMPT_TOKENS_TOTAL = Counter(
+    "ai_agent_prompt_tokens_total",
+    "Total prompt/input tokens consumed by AI agent",
 )
 
-OPENAI_AGENT_COMPLETION_TOKENS_TOTAL = Counter(
-    "openai_agent_completion_tokens_total",
-    "Total completion/output tokens consumed by OpenAI agent",
+AI_AGENT_COMPLETION_TOKENS_TOTAL = Counter(
+    "ai_agent_completion_tokens_total",
+    "Total completion/output tokens consumed by AI agent",
 )
 
-OPENAI_AGENT_TOKENS_TOTAL = Counter(
-    "openai_agent_tokens_total",
-    "Total tokens consumed by OpenAI agent",
+AI_AGENT_TOKENS_TOTAL = Counter(
+    "ai_agent_tokens_total",
+    "Total tokens consumed by AI agent",
 )
 
-OPENAI_AGENT_ESTIMATED_COST_USD_TOTAL = Counter(
-    "openai_agent_estimated_cost_usd_total",
-    "Estimated cumulative OpenAI API cost in USD",
+AI_AGENT_ESTIMATED_COST_USD_TOTAL = Counter(
+    "ai_agent_estimated_cost_usd_total",
+    "Estimated cumulative AI API cost in USD",
 )
 
 
-_OPENAI_ESTIMATED_COST_ACCUM_USD = 0.0
-_OPENAI_TOTAL_TOKENS_ACCUM = 0
+_AI_ESTIMATED_COST_ACCUM_USD = 0.0
+_AI_TOTAL_TOKENS_ACCUM = 0
 
 
 def clamp(value: int) -> int:
@@ -73,7 +73,7 @@ def _coerce_int(value) -> int:
 
 
 def _extract_usage_tokens(response) -> tuple[int, int, int]:
-    """Extract prompt, completion, total token counts from OpenAI response."""
+    """Extract prompt, completion, total token counts from the provider response."""
     usage = getattr(response, "usage", None)
     if usage is None and isinstance(response, dict):
         usage = response.get("usage")
@@ -105,42 +105,42 @@ def _extract_usage_tokens(response) -> tuple[int, int, int]:
 
 
 def _record_usage_metrics(response) -> None:
-    """Record token and estimated cost metrics from the OpenAI response."""
-    global _OPENAI_ESTIMATED_COST_ACCUM_USD, _OPENAI_TOTAL_TOKENS_ACCUM
+    """Record token and estimated cost metrics from the provider response."""
+    global _AI_ESTIMATED_COST_ACCUM_USD, _AI_TOTAL_TOKENS_ACCUM
 
     prompt_tokens, completion_tokens, total_tokens = _extract_usage_tokens(response)
 
     if prompt_tokens > 0:
-        OPENAI_AGENT_PROMPT_TOKENS_TOTAL.inc(prompt_tokens)
+        AI_AGENT_PROMPT_TOKENS_TOTAL.inc(prompt_tokens)
 
     if completion_tokens > 0:
-        OPENAI_AGENT_COMPLETION_TOKENS_TOTAL.inc(completion_tokens)
+        AI_AGENT_COMPLETION_TOKENS_TOTAL.inc(completion_tokens)
 
     if total_tokens > 0:
-        OPENAI_AGENT_TOKENS_TOTAL.inc(total_tokens)
-        _OPENAI_TOTAL_TOKENS_ACCUM += total_tokens
+        AI_AGENT_TOKENS_TOTAL.inc(total_tokens)
+        _AI_TOTAL_TOKENS_ACCUM += total_tokens
 
     estimated_cost_usd = (
-        (prompt_tokens / 1_000_000.0) * OPENAI_INPUT_COST_PER_1M_TOKENS
-        + (completion_tokens / 1_000_000.0) * OPENAI_OUTPUT_COST_PER_1M_TOKENS
+        (prompt_tokens / 1_000_000.0) * AI_INPUT_COST_PER_1M_TOKENS
+        + (completion_tokens / 1_000_000.0) * AI_OUTPUT_COST_PER_1M_TOKENS
     )
     if estimated_cost_usd > 0:
-        OPENAI_AGENT_ESTIMATED_COST_USD_TOTAL.inc(estimated_cost_usd)
-        _OPENAI_ESTIMATED_COST_ACCUM_USD += estimated_cost_usd
+        AI_AGENT_ESTIMATED_COST_USD_TOTAL.inc(estimated_cost_usd)
+        _AI_ESTIMATED_COST_ACCUM_USD += estimated_cost_usd
 
 
 def _budget_exceeded() -> tuple[bool, str]:
-    """Check if runtime OpenAI spending/token caps were exceeded."""
-    if OPENAI_MAX_TOTAL_COST_USD > 0 and _OPENAI_ESTIMATED_COST_ACCUM_USD >= OPENAI_MAX_TOTAL_COST_USD:
+    """Check if runtime AI spending/token caps were exceeded."""
+    if AI_MAX_TOTAL_COST_USD > 0 and _AI_ESTIMATED_COST_ACCUM_USD >= AI_MAX_TOTAL_COST_USD:
         return True, (
-            f"OpenAI estimated cost cap reached: {_OPENAI_ESTIMATED_COST_ACCUM_USD:.6f} "
-            f">= {OPENAI_MAX_TOTAL_COST_USD:.6f} USD"
+            f"AI estimated cost cap reached: {_AI_ESTIMATED_COST_ACCUM_USD:.6f} "
+            f">= {AI_MAX_TOTAL_COST_USD:.6f} USD"
         )
 
-    if OPENAI_MAX_TOTAL_TOKENS > 0 and _OPENAI_TOTAL_TOKENS_ACCUM >= OPENAI_MAX_TOTAL_TOKENS:
+    if AI_MAX_TOTAL_TOKENS > 0 and _AI_TOTAL_TOKENS_ACCUM >= AI_MAX_TOTAL_TOKENS:
         return True, (
-            f"OpenAI token cap reached: {_OPENAI_TOTAL_TOKENS_ACCUM} "
-            f">= {OPENAI_MAX_TOTAL_TOKENS} tokens"
+            f"AI token cap reached: {_AI_TOTAL_TOKENS_ACCUM} "
+            f">= {AI_MAX_TOTAL_TOKENS} tokens"
         )
 
     return False, ""
@@ -165,7 +165,7 @@ def _extract_output_text(response) -> str:
 
 
 def build_prompt(metrics: MetricsSnapshot) -> str:
-    """Build a prompt for the OpenAI agent based on the metrics snapshot."""
+    """Build a prompt for the AI agent based on the metrics snapshot."""
     per_replica_rps = metrics.rps / max(metrics.current_replicas, 1)
 
     policy = {
@@ -210,7 +210,7 @@ def build_prompt(metrics: MetricsSnapshot) -> str:
 
 
 def parse_response(response: str, current_replicas: int) -> AgentRecommendation:
-    """Parse the OpenAI agent's response into an AgentRecommendation."""
+    """Parse the AI agent's response into an AgentRecommendation."""
     payload = json.loads(response)
     action = payload.get("action", "hold")
     if action not in {"scale_up", "scale_down", "hold"}:
@@ -231,13 +231,13 @@ def parse_response(response: str, current_replicas: int) -> AgentRecommendation:
         confidence = 0.5  # Default to 0.5 if parsing fails
 
     confidence = max(0.0, min(1.0, confidence))  # Clamp between 0 and 1
-    reason = str(payload.get("reason", "openai agent fallback response."))
+    reason = str(payload.get("reason", "AI agent fallback response."))
 
     if action == "hold":
         desired_replicas = current_replicas  # Ensure hold action keeps current replicas
 
     return AgentRecommendation(
-        agent_name="openai_agent",
+        agent_name="ai_agent",
         action=action,
         desired_replicas=desired_replicas,
         confidence=confidence,
@@ -246,10 +246,10 @@ def parse_response(response: str, current_replicas: int) -> AgentRecommendation:
 
 
 def fallback(metrics: MetricsSnapshot, reason: str) -> AgentRecommendation:
-    """Fallback logic for the OpenAI agent when it fails to provide a valid response."""
+    """Fallback logic for the AI agent when it fails to provide a valid response."""
     # Default fallback: hold current replicas with low confidence
     return AgentRecommendation(
-        agent_name="openai_agent",
+        agent_name="ai_agent",
         action="hold",
         desired_replicas=getattr(metrics, "current_replicas", MIN_REPLICAS),
         confidence=0.1,
@@ -257,45 +257,45 @@ def fallback(metrics: MetricsSnapshot, reason: str) -> AgentRecommendation:
     )
 
 
-def openai_decision_agent(metrics: MetricsSnapshot) -> AgentRecommendation:
-    """Get a decision from the OpenAI agent based on the metrics snapshot."""
-    if not OPENAI_AGENT_ENABLED:
-        OPENAI_AGENT_REQUESTS_TOTAL.labels(result="disabled").inc()
-        return fallback(metrics, "OpenAI agent is disabled.")
+def ai_decision_agent(metrics: MetricsSnapshot) -> AgentRecommendation:
+    """Get a decision from the AI agent based on the metrics snapshot."""
+    if not AI_AGENT_ENABLED:
+        AI_AGENT_REQUESTS_TOTAL.labels(result="disabled").inc()
+        return fallback(metrics, "AI agent is disabled.")
 
-    if not OPENAI_API_KEY:
-        OPENAI_AGENT_REQUESTS_TOTAL.labels(result="missing_key").inc()
-        return fallback(metrics, "OpenAI API key is not configured.")
+    if not AI_API_KEY:
+        AI_AGENT_REQUESTS_TOTAL.labels(result="missing_key").inc()
+        return fallback(metrics, "AI API key is not configured.")
 
     exceeded, reason = _budget_exceeded()
     if exceeded:
-        OPENAI_AGENT_REQUESTS_TOTAL.labels(result="budget_exceeded").inc()
+        AI_AGENT_REQUESTS_TOTAL.labels(result="budget_exceeded").inc()
         return fallback(metrics, reason)
 
     try:
-        client = OpenAI(api_key=OPENAI_API_KEY, timeout=OPENAI_TIMEOUT_SECONDS)
+        client = OpenAI(api_key=AI_API_KEY, timeout=AI_TIMEOUT_SECONDS)
 
         prompt = build_prompt(metrics)
         if hasattr(client, "responses"):
             response = client.responses.create(
-                model=OPENAI_MODEL,
+                model=AI_MODEL,
                 input=prompt,
             )
         else:
             response = client.chat.completions.create(
-                model=OPENAI_MODEL,
+                model=AI_MODEL,
                 messages=[{"role": "user", "content": prompt}],
                 response_format={"type": "json_object"},
             )
 
         _record_usage_metrics(response)
-        OPENAI_AGENT_REQUESTS_TOTAL.labels(result="success").inc()
+        AI_AGENT_REQUESTS_TOTAL.labels(result="success").inc()
 
         content = _extract_output_text(response)
         if not content:
-            return fallback(metrics, "OpenAI agent returned empty content.")
+            return fallback(metrics, "AI agent returned empty content.")
 
         return parse_response(content, metrics.current_replicas)
     except Exception as e:
-        OPENAI_AGENT_REQUESTS_TOTAL.labels(result="error").inc()
-        return fallback(metrics, f"OpenAI agent error: {str(e)}")
+        AI_AGENT_REQUESTS_TOTAL.labels(result="error").inc()
+        return fallback(metrics, f"AI agent error: {str(e)}")

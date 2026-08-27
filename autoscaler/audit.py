@@ -38,7 +38,7 @@ def _extract_row(payload: dict) -> tuple:
 
     openai_recommendation = None
     for recommendation in payload.get("recommendations", []):
-        if recommendation.get("agent_name") == "openai_agent":
+        if recommendation.get("agent_name") == "ai_agent":
             openai_recommendation = recommendation
             break
 

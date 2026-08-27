@@ -4,7 +4,7 @@ from config import (
   LATENCY_P95_THRESHOLD,
   MAX_REPLICAS,
   MIN_REPLICAS,
-  OPENAI_AGENT_ENABLED,
+    AI_AGENT_ENABLED,
   PER_REPLICA_RPS_THRESHOLD,
   SCALE_DOWN_STEP,
   SCALE_UP_STEP
@@ -12,7 +12,7 @@ from config import (
 
 from channel_logging import get_channel_logger, log_event
 from models import MetricsSnapshot, AgentRecommendation
-from openai_agent import openai_decision_agent
+from ai_agent import ai_decision_agent
 
 
 agents_log = get_channel_logger("agents")
@@ -147,19 +147,19 @@ def run_agents(metrics: MetricsSnapshot, cycle_id: int | None = None) -> list[Ag
             reason=rec.reason,
         )
 
-    if OPENAI_AGENT_ENABLED:
-        openai_recommendation = openai_decision_agent(metrics)
-        recommendations.append(openai_recommendation)
+    if AI_AGENT_ENABLED:
+        ai_recommendation = ai_decision_agent(metrics)
+        recommendations.append(ai_recommendation)
         log_event(
             agents_log,
             "agent_recommendation",
-            title=f"{openai_recommendation.agent_name}:{openai_recommendation.action}",
+            title=f"{ai_recommendation.agent_name}:{ai_recommendation.action}",
             cycle_id=cycle_id,
-            agent_name=openai_recommendation.agent_name,
-            action=openai_recommendation.action,
-            desired_replicas=openai_recommendation.desired_replicas,
-            confidence=openai_recommendation.confidence,
-            reason=openai_recommendation.reason,
+            agent_name=ai_recommendation.agent_name,
+            action=ai_recommendation.action,
+            desired_replicas=ai_recommendation.desired_replicas,
+            confidence=ai_recommendation.confidence,
+            reason=ai_recommendation.reason,
         )
 
     votes_compact = [
