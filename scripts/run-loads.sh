@@ -285,9 +285,12 @@ append_aggregate_autoscaler_window() {
   window_file="$(mktemp "${TMPDIR:-/tmp}/autoscaler-window.XXXXXX")"
 
   capture_control_log_window "$start_offset" "$window_file"
+  grep 'autoscaler\.timeline' "$window_file" >> "$RUN_TIMELINE_LOG" || true
 
   {
     echo
+    echo "================================================================================"
+    echo "[aggregate] PROFILE REPORT BEGIN profile=${profile} ts=${ts}"
     echo "[aggregate] ts=${ts} profile=${profile}"
     if grep -Eq 'errors:cycle:|exception:control_loop|\\[error\\] cycle=|Traceback' "$window_file"; then
       echo "[aggregate] status=SYSTEM_ERROR reason=autoscaler_runtime_failure"
@@ -296,7 +299,7 @@ append_aggregate_autoscaler_window() {
       echo "[aggregate] error_context_end"
     else
       echo "[aggregate] status=SYSTEM_OK reason=no_runtime_failure"
-      key_summary="$(grep -E 'metrics:snapshot|agents:aggregate_votes|aggregation:final|safety:|replicas:|lifecycle:cycle_end' "$window_file" || true)"
+      key_summary="$(python3 analysis/aggregate_decision_log.py "$window_file" 2>/dev/null || true)"
       if [ -n "$key_summary" ]; then
         echo "[aggregate] decision_summary_start"
         echo "$key_summary"
@@ -307,15 +310,86 @@ append_aggregate_autoscaler_window() {
     fi
   } >> "$AGGREGATE_LOG_FILE"
 
-  append_story_from_window "$profile" "$window_file" "$AGGREGATE_LOG_FILE" "$dry_run" "$start_offset"
+  append_story_from_window "$profile" "$window_file" "$profile_log" "$dry_run" "$start_offset"
 
   {
+    echo "[aggregate] PROFILE REPORT END profile=${profile}"
+    echo "================================================================================"
     echo
     echo "[run] aggregate_log=${AGGREGATE_LOG_FILE}"
     tail -n 120 "$AGGREGATE_LOG_FILE"
   } >> "$profile_log"
 
   rm -f "$window_file"
+}
+
+get_audit_event_count() {
+  local pod
+  pod="$(get_autoscaler_pod)"
+  if [ -z "$pod" ]; then
+    echo "0"
+    return 0
+  fi
+
+  kubectl exec -n thesis-autoscaling "$pod" -c audit-db -- \
+    psql -U autoscaler -d autoscaler -At -c 'select count(*) from audit_events' 2>/dev/null \
+    | tr -d '[:space:]' || echo "0"
+}
+
+capture_audit_payloads() {
+  local start_count="$1"
+  local output_file="$2"
+  local pod
+  local captured
+
+  pod="$(get_autoscaler_pod)"
+  if [ -z "$pod" ]; then
+    : > "$output_file"
+    return 0
+  fi
+
+  captured="$(kubectl exec -n thesis-autoscaling "$pod" -c audit-db -- \
+    psql -U autoscaler -d autoscaler -At \
+    -c "select payload_json::text from audit_events order by id asc offset ${start_count}" 2>/dev/null || true)"
+
+  printf '%s\n' "$captured" | while IFS= read -r line; do
+    case "$line" in
+      \{*\}) printf '%s\n' "$line" ;;
+    esac
+  done > "$output_file"
+}
+
+run_post_run_insights() {
+  local audit_payloads_path="$1"
+  local insights_dir="$2"
+  local report_status
+
+  mkdir -p "$insights_dir"
+  if [ ! -s "$audit_payloads_path" ]; then
+    {
+      echo "[analysis] status=NO_AUDIT_EVENTS"
+      echo "[analysis] audit_payloads=${audit_payloads_path}"
+    } >> "$AGGREGATE_LOG_FILE"
+    return 0
+  fi
+
+  if python3 analysis/run_insights.py \
+    --jsonl "$audit_payloads_path" \
+    --output-dir "$insights_dir" \
+    > "${insights_dir}/analysis.log" 2>&1; then
+    report_status="OK"
+  else
+    report_status="ERROR"
+  fi
+
+  {
+    echo "[analysis] status=${report_status}"
+    echo "[analysis] audit_payloads=${audit_payloads_path}"
+    echo "[analysis] metrics_json=${insights_dir}/metrics.json"
+    echo "[analysis] report_markdown=${insights_dir}/report.md"
+    echo "[analysis] figures_dir=${insights_dir}"
+    echo "[analysis] analysis_log=${insights_dir}/analysis.log"
+  } >> "$AGGREGATE_LOG_FILE"
 }
 
 interactive_pick_profiles() {
@@ -453,12 +527,14 @@ for p in "${requested_profiles[@]}"; do
 done
 
 timestamp="$(date +%Y%m%d_%H%M%S)"
-run_dir="${output_base}/load_runs_${timestamp}"
-json_dir="${run_dir}/json"
-log_dir="storage/logs/load_runs_${timestamp}"
+profile_slug="$(IFS=_; echo "${requested_profiles[*]}")"
+run_dir="${output_base}/run_${profile_slug}_${timestamp}"
+json_dir="${run_dir}"
+log_dir="${run_dir}"
 autoscaler_timeline_log="storage/logs/autoscaler/timeline.log"
 mkdir -p "$json_dir" "$log_dir"
-AGGREGATE_LOG_FILE="${log_dir}/autoscaler_aggregate.log"
+AGGREGATE_LOG_FILE="${run_dir}/aggregate.log"
+RUN_TIMELINE_LOG="${run_dir}/timeline.log"
 
 {
   echo "[aggregate] started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ) run_dir=${run_dir}"
@@ -477,6 +553,8 @@ status_file="${run_dir}/status.txt"
 echo "Run directory: $run_dir"
 stage_log "initialized" "run_dir=${run_dir} parallel=${parallel_mode} dry_run=${dry_run} profiles=${requested_profiles[*]}"
 append_system_health_status "$AGGREGATE_LOG_FILE"
+audit_start_count="$(get_audit_event_count)"
+echo "[aggregate] audit_start_count=${audit_start_count}" >> "$AGGREGATE_LOG_FILE"
 
 run_one() {
   local profile="$1"
@@ -556,6 +634,11 @@ else
   done
 fi
 
+audit_payloads_path="${json_dir}/audit_payloads.jsonl"
+insights_dir="${run_dir}/insights"
+capture_audit_payloads "${audit_start_count:-0}" "$audit_payloads_path"
+run_post_run_insights "$audit_payloads_path" "$insights_dir"
+
 {
   printf 'finished_at=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   printf 'overall_exit=%s\n' "$overall_exit"
@@ -567,12 +650,11 @@ else
   echo "One or more load profiles failed."
 fi
 
-stage_log "completed" "overall_exit=${overall_exit} status=${status_file} json_dir=${json_dir} log_dir=${log_dir}"
+stage_log "completed" "overall_exit=${overall_exit} status=${status_file} run_dir=${run_dir}"
 
 echo "Storage:"
 echo "- Status: ${status_file}"
-echo "- JSON summaries: ${json_dir}"
-echo "- Logs: ${log_dir}"
+echo "- All run artifacts: ${run_dir}"
 echo "- Autoscaler decision flow: ${autoscaler_timeline_log}"
 echo "- Autoscaler aggregate log: ${AGGREGATE_LOG_FILE}"
 
