@@ -32,6 +32,10 @@ ENV/
 storage/
 !storage/
 !storage/**/
+storage/runs/controller_comparisons/
+
+# Local debugging helpers
+debug_env.py
 
 # Misc logs
 *.log
