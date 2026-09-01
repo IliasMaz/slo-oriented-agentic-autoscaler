@@ -107,9 +107,9 @@ chmod +x scripts/*.sh
 
 Key options in `.env`:
 
-- `OPENAI_AGENT_ENABLED=true` to include OpenAI recommendations
-- `OPENAI_INPUT_COST_PER_1M_TOKENS` and `OPENAI_OUTPUT_COST_PER_1M_TOKENS` for estimated cost tracking
-- `OPENAI_MAX_TOTAL_COST_USD` and `OPENAI_MAX_TOTAL_TOKENS` for runtime budget guardrails (`0` disables)
+- `AI_AGENT_ENABLED=true` to include AI recommendations
+- `AI_INPUT_COST_PER_1M_TOKENS` and `AI_OUTPUT_COST_PER_1M_TOKENS` for estimated cost tracking
+- `AI_MAX_TOTAL_COST_USD` and `AI_MAX_TOTAL_TOKENS` for runtime budget guardrails (`0` disables)
 - `MIN_SCALE_ACTION_INTERVAL_SECONDS`, `SCALE_DIRECTION_CHANGE_COOLDOWN_SECONDS`, and `SCALE_DOWN_RELEASE_MARGIN` for anti-thrashing safety
 - `AUDIT_DB_BACKEND=sqlite|postgres`
 - `LOG_DIR=storage/logs/autoscaler` for channel logs (`lifecycle`, `errors`, `metrics`, `agents`, `arbitration`, `safety`, `scaling`, `audit`, `timeline`)

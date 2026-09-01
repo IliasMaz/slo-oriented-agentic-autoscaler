@@ -19,14 +19,20 @@ def _metric(summary: dict, metric: str, field: str) -> float | None:
         return None
 
 
+def _response_metric(summary: dict, field: str) -> float | None:
+    """Prefer latency from successful expected responses over failed requests."""
+    expected = _metric(summary, "http_req_duration{expected_response:true}", field)
+    return expected if expected is not None else _metric(summary, "http_req_duration", field)
+
+
 def _run_metrics(run_dir: Path) -> dict:
     summaries = sorted(run_dir.glob("*_summary.json"))
     if not summaries:
         return {}
     summary = _load(summaries[0])
     values = {
-        "p95_latency_ms": _metric(summary, "http_req_duration", "p(95)"),
-        "avg_latency_ms": _metric(summary, "http_req_duration", "avg"),
+        "p95_latency_ms": _response_metric(summary, "p(95)"),
+        "avg_latency_ms": _response_metric(summary, "avg"),
         "failed_rate": _metric(summary, "http_req_failed", "value"),
         "iterations": _metric(summary, "iterations", "count"),
         "http_requests": _metric(summary, "http_reqs", "count"),
@@ -55,8 +61,8 @@ def _run_metrics_by_profile(run_dir: Path) -> dict[str, dict]:
         summary = _load(summary_path)
         profile = summary_path.name.removesuffix("_summary.json")
         results[profile] = {
-            "p95_latency_ms": _metric(summary, "http_req_duration", "p(95)"),
-            "avg_latency_ms": _metric(summary, "http_req_duration", "avg"),
+            "p95_latency_ms": _response_metric(summary, "p(95)"),
+            "avg_latency_ms": _response_metric(summary, "avg"),
             "failed_rate": _metric(summary, "http_req_failed", "value"),
             "iterations": _metric(summary, "iterations", "count"),
             "http_requests": _metric(summary, "http_reqs", "count"),
