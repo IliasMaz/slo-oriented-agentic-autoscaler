@@ -1,0 +1,106 @@
+{
+  "controllers": {
+    "agentic": {
+      "p95_latency_ms": 0.0,
+      "avg_latency_ms": 14.780343041947688,
+      "failed_rate": 0.9890432260711117,
+      "iterations": 419284.0,
+      "http_requests": 419284.0,
+      "max_vus": 600.0,
+      "slo_violation_ratio": 0.0,
+      "avg_replicas": 1.6562,
+      "scaled_events": 5,
+      "vetoed_events": 0,
+      "transition_rate": 0.2903
+    },
+    "hpa": {
+      "p95_latency_ms": 10763.142699999995,
+      "avg_latency_ms": 3496.025868560553,
+      "failed_rate": 0.030478714593341064,
+      "iterations": 12074.0,
+      "http_requests": 12074.0,
+      "max_vus": 600.0
+    }
+  },
+  "delta_agentic_vs_hpa_pct": {
+    "avg_latency_ms": -99.58,
+    "avg_replicas": null,
+    "failed_rate": 3145.03,
+    "http_requests": 3372.62,
+    "iterations": 3372.62,
+    "max_vus": 0.0,
+    "p95_latency_ms": -100.0,
+    "scaled_events": null,
+    "slo_violation_ratio": null,
+    "transition_rate": null,
+    "vetoed_events": null
+  },
+  "profiles": {
+    "spike": {
+      "agentic": {
+        "p95_latency_ms": 0.0,
+        "avg_latency_ms": 14.780343041947688,
+        "failed_rate": 0.9890432260711117,
+        "iterations": 419284.0,
+        "http_requests": 419284.0,
+        "max_vus": 600.0,
+        "slo_violation_ratio": 0.0,
+        "avg_replicas": 1.6562,
+        "scaled_events": 5,
+        "vetoed_events": 0,
+        "transition_rate": 0.2903
+      },
+      "hpa": {
+        "p95_latency_ms": 10763.142699999995,
+        "avg_latency_ms": 3496.025868560553,
+        "failed_rate": 0.030478714593341064,
+        "iterations": 12074.0,
+        "http_requests": 12074.0,
+        "max_vus": 600.0
+      },
+      "delta_agentic_vs_hpa_pct": {
+        "avg_latency_ms": -99.58,
+        "avg_replicas": null,
+        "failed_rate": 3145.03,
+        "http_requests": 3372.62,
+        "iterations": 3372.62,
+        "max_vus": 0.0,
+        "p95_latency_ms": -100.0,
+        "scaled_events": null,
+        "slo_violation_ratio": null,
+        "transition_rate": null,
+        "vetoed_events": null
+      }
+    }
+  },
+  "metric_labels": {
+    "p95_latency_ms": "Waiting time (p95)",
+    "avg_latency_ms": "Average waiting time",
+    "failed_rate": "Failed requests",
+    "iterations": "Completed requests",
+    "http_requests": "Total requests",
+    "avg_replicas": "Average workers (replicas)",
+    "slo_violation_ratio": "SLO violations",
+    "scaled_events": "Scaling actions",
+    "vetoed_events": "Safety blocks",
+    "transition_rate": "Action changes",
+    "max_vus": "Max VUs"
+  },
+  "interpretation": {
+    "lower_is_better": [
+      "p95_latency_ms",
+      "avg_latency_ms",
+      "failed_rate",
+      "slo_violation_ratio",
+      "avg_replicas",
+      "vetoed_events",
+      "transition_rate"
+    ],
+    "higher_is_better": [
+      "iterations",
+      "http_requests",
+      "max_vus"
+    ],
+    "note": "Comparison is valid only when workload, application resources, limits, and repetitions are matched."
+  }
+}

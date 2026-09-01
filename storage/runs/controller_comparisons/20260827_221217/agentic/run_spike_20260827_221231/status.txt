@@ -1,0 +1,7 @@
+started_at=2026-08-27T19:12:31Z
+parallel=0
+dry_run=0
+profiles=spike
+spike exit_code=0
+finished_at=2026-08-27T19:16:09Z
+overall_exit=0
