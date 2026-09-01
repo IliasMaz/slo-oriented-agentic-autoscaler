@@ -35,11 +35,17 @@ def _run_metrics(run_dir: Path) -> dict:
     insights_path = run_dir / "insights" / "metrics.json"
     if insights_path.exists():
         insights = _load(insights_path)
-        values["slo_violation_ratio"] = insights.get("slo_violation_ratio", {}).get("combined")
+        values["slo_violation_ratio"] = insights.get("slo_violation_ratio", {}).get(
+            "combined"
+        )
         values["avg_replicas"] = insights.get("averages", {}).get("replicas")
         values["scaled_events"] = insights.get("scaled_events")
-        values["vetoed_events"] = insights.get("control_stability", {}).get("vetoed_events")
-        values["transition_rate"] = insights.get("control_stability", {}).get("transition_rate")
+        values["vetoed_events"] = insights.get("control_stability", {}).get(
+            "vetoed_events"
+        )
+        values["transition_rate"] = insights.get("control_stability", {}).get(
+            "transition_rate"
+        )
     return values
 
 
@@ -59,13 +65,21 @@ def _run_metrics_by_profile(run_dir: Path) -> dict[str, dict]:
         insights_path = run_dir / "insights" / "metrics.json"
         if insights_path.exists():
             insights = _load(insights_path)
-            results[profile].update({
-                "slo_violation_ratio": insights.get("slo_violation_ratio", {}).get("combined"),
-                "avg_replicas": insights.get("averages", {}).get("replicas"),
-                "scaled_events": insights.get("scaled_events"),
-                "vetoed_events": insights.get("control_stability", {}).get("vetoed_events"),
-                "transition_rate": insights.get("control_stability", {}).get("transition_rate"),
-            })
+            results[profile].update(
+                {
+                    "slo_violation_ratio": insights.get("slo_violation_ratio", {}).get(
+                        "combined"
+                    ),
+                    "avg_replicas": insights.get("averages", {}).get("replicas"),
+                    "scaled_events": insights.get("scaled_events"),
+                    "vetoed_events": insights.get("control_stability", {}).get(
+                        "vetoed_events"
+                    ),
+                    "transition_rate": insights.get("control_stability", {}).get(
+                        "transition_rate"
+                    ),
+                }
+            )
     return results
 
 
@@ -90,6 +104,7 @@ def compare(agentic_dir: Path, hpa_dir: Path) -> dict:
         "scaled_events": "Scaling actions",
         "vetoed_events": "Safety blocks",
         "transition_rate": "Action changes",
+        "max_vus": "Max VUs",
     }
     agentic_profiles = _run_metrics_by_profile(agentic_dir)
     hpa_profiles = _run_metrics_by_profile(hpa_dir)
@@ -107,7 +122,9 @@ def compare(agentic_dir: Path, hpa_dir: Path) -> dict:
         }
     return {
         "controllers": {"agentic": agentic, "hpa": hpa},
-        "delta_agentic_vs_hpa_pct": {key: _delta(agentic.get(key), hpa.get(key)) for key in keys},
+        "delta_agentic_vs_hpa_pct": {
+            key: _delta(agentic.get(key), hpa.get(key)) for key in keys
+        },
         "profiles": profile_comparisons,
         "metric_labels": metric_labels,
         "interpretation": {
@@ -120,8 +137,11 @@ def compare(agentic_dir: Path, hpa_dir: Path) -> dict:
                 "vetoed_events",
                 "transition_rate",
             ],
-            "higher_is_better": ["iterations", "http_requests"],
-            "note": "Comparison is valid only when workload, application resources, limits, and repetitions are matched.",
+            "higher_is_better": ["iterations", "http_requests", "max_vus"],
+            "note": (
+                "Comparison is valid only when workload, application resources, "
+                "limits, and repetitions are matched."
+            ),
         },
     }
 
@@ -131,14 +151,25 @@ def write_figure(result: dict, output: Path) -> bool:
         import matplotlib.pyplot as plt
     except ImportError:
         return False
+
     names = ["p95_latency_ms", "failed_rate", "avg_replicas", "slo_violation_ratio"]
     agentic = [result["controllers"]["agentic"].get(name) or 0 for name in names]
     hpa = [result["controllers"]["hpa"].get(name) or 0 for name in names]
     figure, axis = plt.subplots(figsize=(10, 5))
     positions = list(range(len(names)))
     width = 0.38
-    axis.bar([position - width / 2 for position in positions], agentic, width, label="Agentic")
-    axis.bar([position + width / 2 for position in positions], hpa, width, label="HPA")
+    axis.bar(
+        [position - width / 2 for position in positions],
+        agentic,
+        width,
+        label="Agentic",
+    )
+    axis.bar(
+        [position + width / 2 for position in positions],
+        hpa,
+        width,
+        label="HPA",
+    )
     axis.set_xticks(positions, names, rotation=20, ha="right")
     axis.set_ylabel("Value (native metric units)")
     axis.set_title("Agentic autoscaler versus Kubernetes HPA")
@@ -153,7 +184,14 @@ def write_figure(result: dict, output: Path) -> bool:
 def markdown(result: dict, figure_name: str | None) -> str:
     agentic = result["controllers"]["agentic"]
     hpa = result["controllers"]["hpa"]
-    keys = sorted(set(agentic) | set(hpa))
+    metric_labels = result.get("metric_labels", {})
+
+    common_keys = sorted(
+        key
+        for key in (set(agentic) | set(hpa))
+        if agentic.get(key) is not None and hpa.get(key) is not None
+    )
+
     def display(value: object) -> str:
         return "not measured" if value is None else str(value)
 
@@ -168,9 +206,6 @@ def markdown(result: dict, figure_name: str | None) -> str:
         agentic_wins = left < right if lower_is_better else left > right
         return "Agentic" if agentic_wins else "HPA"
 
-    def winner(key: str) -> str:
-        return winner_for(key, agentic, hpa)
-
     lines = [
         "# Controller Comparison",
         "",
@@ -179,29 +214,40 @@ def markdown(result: dict, figure_name: str | None) -> str:
         "| What we measured | Agentic | HPA | Winner |",
         "|---|---:|---:|---|",
     ]
-    if len(result.get("profiles", {})) > 1:
-        lines.extend(["## Results per workload", ""])
-        for profile, comparison in result["profiles"].items():
-            lines.extend([f"### {profile}", "", "| Metric | Agentic | HPA | Winner |", "|---|---:|---:|---|"])
-            profile_agentic = comparison["agentic"]
-            profile_hpa = comparison["hpa"]
-            for key in sorted(set(profile_agentic) | set(profile_hpa)):
-                lines.append(f"| {result.get('metric_labels', {}).get(key, key)} | `{display(profile_agentic.get(key))}` | `{display(profile_hpa.get(key))}` | **{winner_for(key, profile_agentic, profile_hpa)}** |")
-            lines.append("")
-    for key in keys:
+
+    for key in common_keys:
         lines.append(
-            f"| {result.get('metric_labels', {}).get(key, key)} | `{display(agentic.get(key))}` | `{display(hpa.get(key))}` | **{winner(key)}** |"
+            f"| {metric_labels.get(key, key)} | "
+            f"`{display(agentic.get(key))}` | `{display(hpa.get(key))}` | "
+            f"**{winner_for(key, agentic, hpa)}** |"
         )
-    lines.extend([
-        "",
-        "## How to read this",
-        "",
-        "- Waiting time, failures, SLO violations, workers, blocks, and action changes: **smaller is better**.",
-        "- Completed and total requests: **bigger is better** when the test duration is identical.",
-        "- `not measured` means that controller did not produce the needed data, so that row must not be used as evidence.",
-        "- This is one experiment, not proof that one controller is always better.",
-        "",
-    ])
+
+    agentic_only_keys = sorted(
+        key
+        for key in agentic
+        if hpa.get(key) is None and agentic.get(key) is not None
+    )
+
+    if agentic_only_keys:
+        lines.extend(["", "## Agentic-only metrics", ""])
+        for key in agentic_only_keys:
+            lines.append(f"- {metric_labels.get(key, key)}: `{agentic[key]}`")
+
+    lines.extend(
+        [
+            "",
+            "## How to read this",
+            "",
+            "- Waiting time, failures, SLO violations, workers, blocks, and action "
+            "changes: **smaller is better**.",
+            "- Completed and total requests: **bigger is better** when the test "
+            "duration is identical.",
+            "- `not measured` means that controller did not produce the needed data, "
+            "so that row must not be used as evidence.",
+            "- This is one experiment, not proof that one controller is always better.",
+            "",
+        ]
+    )
     if figure_name:
         lines.extend([f"![Controller comparison]({figure_name})", ""])
     return "\n".join(lines)
@@ -218,9 +264,13 @@ def main() -> None:
     result = compare(args.agentic_run, args.hpa_run)
     figure = args.output_dir / "controller_comparison.png"
     has_figure = write_figure(result, figure)
-    (args.output_dir / "controller_comparison.json").write_text(json.dumps(result, indent=2), encoding="utf-8")
+    (args.output_dir / "controller_comparison.json").write_text(
+        json.dumps(result, indent=2),
+        encoding="utf-8",
+    )
     (args.output_dir / "controller_comparison.md").write_text(
-        markdown(result, figure.name if has_figure else None), encoding="utf-8"
+        markdown(result, figure.name if has_figure else None),
+        encoding="utf-8",
     )
     print(f"Wrote controller comparison to {args.output_dir}")
 

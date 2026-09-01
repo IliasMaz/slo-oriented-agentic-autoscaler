@@ -467,19 +467,18 @@ All profiles:
 ./scripts/run-loads.sh --all
 ```
 
-Each run creates `storage/runs/load_runs_YYYYMMDD_HHMMSS/` with:
+Each execution creates one named folder under `storage/runs/`, for example
+`storage/runs/run_spike_YYYYMMDD_HHMMSS/`, containing:
 
 - `status.txt`
-- `json/*_summary.json`
+- `*_summary.json`
+- `audit_payloads.jsonl` (audit events observed during this run)
+- `*.log`, `*.jsonl`, `aggregate.log`, and `timeline.log`
+- `insights/report.md` and `insights/metrics.json`
+- `insights/figure_*.png` (control response, SLO protection, efficiency, stability, and weight sensitivity)
 
-The per-profile k6 logs are stored in:
-
-- `storage/logs/load_runs_YYYYMMDD_HHMMSS/*.log`
-- `storage/logs/load_runs_YYYYMMDD_HHMMSS/*.jsonl` (same basename as `.log`, for structured start/end events)
-
-The autoscaler decision flow is stored in:
-
-- `storage/logs/autoscaler/timeline.log`
+The runtime autoscaler log remains in `storage/logs/autoscaler/` as the shared live
+source; each run also copies its observed timeline into its own `timeline.log`.
 
 Manual direct k6 commands (optional):
 
@@ -576,7 +575,66 @@ python3 analysis/run_summary.py \
 
 This script produces a readable report for presentation, review, and follow-up analysis.
 
-### 3) Bayesian-style policy optimizer
+### 3) Post-run insights and correlations
+
+The load runner automatically exports the new audit events after the run and executes:
+
+```bash
+python3 analysis/run_insights.py \
+	--jsonl storage/runs/load_runs_YYYYMMDD_HHMMSS/json/audit_payloads.jsonl \
+	--output-dir storage/runs/load_runs_YYYYMMDD_HHMMSS/insights
+```
+
+The report includes action and veto distributions, SLO violation ratios, average signals,
+and Pearson correlations between current replicas and RPS, latency, error rate, and
+in-progress requests. The aggregate log records the artifact paths and keeps explicit
+profile and analysis sections so important outcomes remain easy to find.
+
+### 4) Agentic versus HPA comparison
+
+The two controllers should run sequentially in the same workspace, with separate run
+directories. Do not attach both controllers to `demo-app` at the same time.
+
+Run and preserve the agentic result:
+
+```bash
+./scripts/run-loads.sh spike --out-dir storage/runs/agentic
+```
+
+For the HPA trial, remove the agentic autoscaler deployment and apply:
+
+```bash
+kubectl delete deployment agent-autoscaler -n thesis-autoscaling
+kubectl apply -f k8s/hpa.yaml
+./scripts/run-loads.sh spike --out-dir storage/runs/hpa
+```
+
+Create one combined comparison report:
+
+```bash
+python3 analysis/compare_controllers.py \
+	--agentic-run storage/runs/agentic/run_spike_TIMESTAMP \
+	--hpa-run storage/runs/hpa/run_spike_TIMESTAMP \
+	--output-dir storage/runs/insights/controller-comparison
+```
+
+The comparison directory contains `controller_comparison.md`,
+`controller_comparison.json`, and `controller_comparison.png`. The comparison is valid
+only when the same profile, application image, resource requests, replica bounds, and
+number of repetitions are used.
+
+For the complete sequential experiment and automatic restoration of the agentic
+controller, use one command:
+
+```bash
+./scripts/compare-agentic-hpa.sh spike
+```
+
+The script runs the selected profile once per controller and writes everything under
+`storage/runs/controller_comparisons/TIMESTAMP/`. It requires `kind`, `kubectl`, `k6`,
+Docker, and a working metrics-server.
+
+### 5) Bayesian-style policy optimizer
 
 Purpose:
 

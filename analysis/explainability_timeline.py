@@ -81,7 +81,7 @@ def _load_from_jsonl(path: Path, limit: int) -> list[dict]:
         openai_confidence = None
         openai_reason = None
         for rec in payload.get("recommendations", []):
-            if rec.get("agent_name") == "openai_agent":
+            if rec.get("agent_name") == "ai_agent":
                 openai_action = rec.get("action")
                 openai_confidence = rec.get("confidence")
                 openai_reason = rec.get("reason")
@@ -147,13 +147,13 @@ def build_markdown(events: list[dict]) -> str:
             f"- Snapshot: rps=`{event['rps']}`, p95=`{event['p95_latency']}`, error_rate=`{event['error_rate']}`, inprogress=`{event['inprogress']}`, current_replicas=`{event['current_replicas']}`"
         )
         lines.append(
-            f"- OpenAI recommendation: action=`{event['openai_action']}`, confidence=`{event['openai_confidence']}`"
+            f"- AI recommendation: action=`{event['openai_action']}`, confidence=`{event['openai_confidence']}`"
         )
         lines.append(f"- Top veto trigger: `{_top_veto(event['payload'])}`")
         best = _best_score(event["payload"])
         lines.append(f"- Best arbitration score: `{best}`")
         if event.get("openai_reason"):
-            lines.append(f"- OpenAI reason: {event['openai_reason']}")
+            lines.append(f"- AI reason: {event['openai_reason']}")
         lines.append("")
 
     return "\n".join(lines)

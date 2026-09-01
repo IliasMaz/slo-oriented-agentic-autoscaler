@@ -78,7 +78,7 @@ def run_agents_node(state: AutoscalerState) -> dict:
     """
     Step 2.
     Runs all agents (latency, error, throughput, saturation,
-    and if enabled, the openai_agent).
+    and if enabled, the ai_agent).
     Each agent sees the snapshot and returns an AgentRecommendation.
     """
 

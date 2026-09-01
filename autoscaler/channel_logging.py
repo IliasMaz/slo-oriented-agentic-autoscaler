@@ -110,6 +110,9 @@ def log_human(
     cycle_tag = f"cycle={cycle_id}" if cycle_id is not None else "cycle=-"
     suffix = _format_key_values(**fields)
     logger.info(f"[{stage}] - {cycle_tag} | {message}{suffix}")
+    if stage == "cycle" and message == "Cycle completed":
+        logger.info("--------------------------------------------------------------------------------")
+        logger.info("")
 
 
 def log_exception(
