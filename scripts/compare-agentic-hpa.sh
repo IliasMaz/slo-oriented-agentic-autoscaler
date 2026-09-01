@@ -7,8 +7,12 @@ COMPARISON_DIR="storage/runs/controller_comparisons/${COMPARISON_ID}"
 AGENTIC_ROOT="${COMPARISON_DIR}/agentic"
 HPA_ROOT="${COMPARISON_DIR}/hpa"
 AGENTIC_READY=0
+PORT_FORWARD_PID=""
 
 restore_agentic() {
+  if [ -n "$PORT_FORWARD_PID" ]; then
+    kill "$PORT_FORWARD_PID" 2>/dev/null || true
+  fi
   if [ "$AGENTIC_READY" -eq 1 ]; then
     echo "Restoring agentic autoscaler..."
     kubectl delete hpa demo-app-hpa -n thesis-autoscaling --ignore-not-found >/dev/null 2>&1 || true
@@ -17,12 +21,33 @@ restore_agentic() {
 }
 trap restore_agentic EXIT
 
+start_app_port_forward() {
+  kubectl port-forward svc/demo-app 8000:8000 -n thesis-autoscaling \
+    > "${COMPARISON_DIR}/app-port-forward.log" 2>&1 &
+  PORT_FORWARD_PID=$!
+
+  for _ in $(seq 1 30); do
+    if curl -fsS --max-time 2 http://localhost:8000/health >/dev/null 2>&1; then
+      return 0
+    fi
+    if ! kill -0 "$PORT_FORWARD_PID" 2>/dev/null; then
+      echo "ERROR: app port-forward exited; see ${COMPARISON_DIR}/app-port-forward.log" >&2
+      return 1
+    fi
+    sleep 1
+  done
+
+  echo "ERROR: demo app did not become reachable at http://localhost:8000" >&2
+  return 1
+}
+
 if [ "$PROFILE" != "all" ] && [ ! -f "load/${PROFILE}.js" ]; then
   echo "ERROR: load profile not found: load/${PROFILE}.js" >&2
   exit 1
 fi
 
 mkdir -p "$AGENTIC_ROOT" "$HPA_ROOT"
+start_app_port_forward
 
 echo "Preparing agentic controller..."
 kubectl delete hpa demo-app-hpa -n thesis-autoscaling --ignore-not-found >/dev/null 2>&1 || true

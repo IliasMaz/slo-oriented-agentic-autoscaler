@@ -14,6 +14,12 @@
 > It is intended for research, reproducibility, educational review, and
 > portfolio presentation.
 
+> Active experiment workflow: `scripts/run-loads.sh` for one controller run and
+> `scripts/compare-agentic-hpa.sh` for matched Agentic-versus-HPA runs. See
+> [documentation/RUNBOOK.md](documentation/RUNBOOK.md) for commands and
+> [documentation/MVP_CLEANUP.md](documentation/MVP_CLEANUP.md) for the current
+> analysis scope.
+
 ---
 
 ## Copyright
