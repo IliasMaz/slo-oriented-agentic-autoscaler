@@ -39,7 +39,7 @@ spec:
             - name: MAX_REPLICAS
               value: "10"
             - name: POLL_INTERVAL_SECONDS
-              value: "15"
+              value: "5"
             - name: LATENCY_P95_THRESHOLD
               value: "0.40"
             - name: ERROR_RATE_THRESHOLD
@@ -53,13 +53,13 @@ spec:
             - name: SCALE_DOWN_STEP
               value: "1"
             - name: SCALE_UP_COOLDOWN_SECONDS
-              value: "30"
+              value: "10"
             - name: SCALE_DOWN_COOLDOWN_SECONDS
-              value: "120"
-            - name: MIN_SCALE_ACTION_INTERVAL_SECONDS
               value: "20"
+            - name: MIN_SCALE_ACTION_INTERVAL_SECONDS
+              value: "10"
             - name: SCALE_DIRECTION_CHANGE_COOLDOWN_SECONDS
-              value: "90"
+              value: "30"
             - name: SCALE_DOWN_RELEASE_MARGIN
               value: "0.85"
             - name: AUDIT_LOG_PATH
@@ -80,25 +80,25 @@ spec:
               value: "autoscaler"
             - name: AUDIT_DB_PASSWORD
               value: "autoscaler"
-            - name: OPENAI_AGENT_ENABLED
+            - name: AI_AGENT_ENABLED
               value: "true"
-            - name: OPENAI_MODEL
+            - name: AI_MODEL
               value: "gpt-5.4"
-            - name: OPENAI_TIMEOUT_SECONDS
+            - name: AI_TIMEOUT_SECONDS
               value: "10"
-            - name: OPENAI_INPUT_COST_PER_1M_TOKENS
+            - name: AI_INPUT_COST_PER_1M_TOKENS
               value: "0"
-            - name: OPENAI_OUTPUT_COST_PER_1M_TOKENS
+            - name: AI_OUTPUT_COST_PER_1M_TOKENS
               value: "0"
-            - name: OPENAI_MAX_TOTAL_COST_USD
+            - name: AI_MAX_TOTAL_COST_USD
               value: "0"
-            - name: OPENAI_MAX_TOTAL_TOKENS
+            - name: AI_MAX_TOTAL_TOKENS
               value: "0"
-            - name: OPENAI_API_KEY
+            - name: AI_API_KEY
               valueFrom:
                 secretKeyRef:
-                  name: openai-api-secret
-                  key: OPENAI_API_KEY
+                  name: ai-api-secret
+                  key: AI_API_KEY
             - name: WEIGHT_LATENCY
               value: "0.30"
             - name: WEIGHT_ERROR

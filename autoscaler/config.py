@@ -4,6 +4,9 @@ runtime settings for the autoscaler.
 """
 
 import os
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # Environment variable configuration
 def get_env(name: str, default: str) -> str:

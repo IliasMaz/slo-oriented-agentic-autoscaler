@@ -55,14 +55,14 @@ data:
               summary: "Demo app p95 latency is high"
               description: "p95 latency has stayed above 600ms for more than 3 minutes."
 
-          - alert: OpenAIBudgetExceeded
-            expr: increase(openai_agent_requests_total{result="budget_exceeded"}[10m]) > 0
+          - alert: AIBudgetExceeded
+            expr: increase(ai_agent_requests_total{result="budget_exceeded"}[10m]) > 0
             for: 0m
             labels:
               severity: warning
             annotations:
-              summary: "OpenAI budget guardrail has been triggered"
-              description: "Autoscaler has started falling back due to OpenAI budget/token guardrails."
+              summary: "AI budget guardrail has been triggered"
+              description: "Autoscaler has started falling back due to AI budget/token guardrails."
 
           - alert: AutoscalerVetoSurge
             expr: increase(autoscaler_decisions_total{veto="true"}[10m]) > 5
