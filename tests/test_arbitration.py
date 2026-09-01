@@ -8,6 +8,7 @@ if str(AUTOSCALER_DIR) not in sys.path:
     sys.path.insert(0, str(AUTOSCALER_DIR))
 
 from arbitration import arbitrate
+from config import MAX_REPLICAS, MIN_REPLICAS, SCALE_UP_STEP
 from models import AgentRecommendation, MetricsSnapshot
 
 
@@ -52,7 +53,7 @@ class ArbitrationScaleUpTest(unittest.TestCase):
                 reason="inprogress ok",
             ),
             AgentRecommendation(
-                agent_name="openai_agent",
+                agent_name="ai_agent",
                 action="hold",
                 desired_replicas=1,
                 confidence=0.1,
@@ -63,7 +64,11 @@ class ArbitrationScaleUpTest(unittest.TestCase):
         decision = arbitrate(metrics, recommendations, cycle_id=42)
 
         self.assertEqual(decision.action, "scale_up")
-        self.assertEqual(decision.desired_replicas, 2)
+        expected_replicas = max(
+            MIN_REPLICAS,
+            min(MAX_REPLICAS, metrics.current_replicas + SCALE_UP_STEP),
+        )
+        self.assertEqual(decision.desired_replicas, expected_replicas)
 
 
 if __name__ == "__main__":

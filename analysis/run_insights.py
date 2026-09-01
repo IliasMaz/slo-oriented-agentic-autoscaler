@@ -8,14 +8,6 @@ import math
 from collections import Counter
 from pathlib import Path
 
-DEFAULT_WEIGHTS = {
-    "latency": 0.30,
-    "error": 0.25,
-    "saturation": 0.15,
-    "throughput": 0.15,
-    "cost": 0.10,
-    "disagreement": 0.20,
-}
 METRIC_KEYS = ("rps", "p95_latency", "error_rate", "inprogress", "replicas")
 
 
@@ -74,57 +66,6 @@ def _rows(events: list[dict]) -> list[dict]:
     return rows
 
 
-def _scenario_scores(event: dict, weights: dict[str, float]) -> dict[str, float]:
-    scores = event.get("aggregate", {}).get("scores", [])
-    fields = {
-        "latency": "latency_penalty",
-        "error": "error_penalty",
-        "saturation": "saturation_penalty",
-        "throughput": "throughput_penalty",
-        "cost": "cost_penalty",
-        "disagreement": "disagreement_penalty",
-    }
-    result: dict[str, float] = {}
-    for score in scores:
-        if not isinstance(score, dict):
-            continue
-        result[str(score.get("action", "hold"))] = sum(
-            weights[name] * float(score.get(field, 0.0))
-            for name, field in fields.items()
-        )
-    return result
-
-
-def _ablation(events: list[dict]) -> dict:
-    scenarios = {
-        "baseline": DEFAULT_WEIGHTS,
-        "latency_priority": {**DEFAULT_WEIGHTS, "latency": 0.60, "cost": 0.05},
-        "cost_priority": {**DEFAULT_WEIGHTS, "latency": 0.15, "cost": 0.40},
-        "consensus_priority": {**DEFAULT_WEIGHTS, "disagreement": 0.45, "cost": 0.05},
-    }
-    result = {}
-    for name, weights in scenarios.items():
-        actions: Counter[str] = Counter()
-        changed = 0
-        for event in events:
-            if name == "baseline":
-                selected = str(event.get("aggregate", {}).get("action", "hold"))
-            else:
-                scores = _scenario_scores(event, weights)
-                if not scores:
-                    continue
-                selected = min(scores, key=scores.get)
-            actions[selected] += 1
-            if selected != event.get("aggregate", {}).get("action", "hold"):
-                changed += 1
-        result[name] = {
-            "weights": weights,
-            "action_distribution": dict(actions),
-            "changed_from_recorded": changed,
-        }
-    return result
-
-
 def summarize(events: list[dict], latency_threshold: float, error_threshold: float) -> dict:
     rows = _rows(events)
     actions = Counter(row["action"] for row in rows)
@@ -175,7 +116,6 @@ def summarize(events: list[dict], latency_threshold: float, error_threshold: flo
             )
             for key in ("rps", "p95_latency", "error_rate", "inprogress")
         },
-        "weight_sensitivity": _ablation(events),
     }
 
 
@@ -185,79 +125,71 @@ def _save_figure(path: Path, title: str, plotter) -> bool:
     except ImportError:
         return False
     plotter(plt)
-    plt.title(title)
-    plt.tight_layout()
+    figure = plt.gcf()
+    figure.suptitle(title)
+    figure.tight_layout(rect=(0, 0, 1, 0.97))
     plt.savefig(path, dpi=160)
     plt.close()
     return True
 
 
-def write_figures(rows: list[dict], ablation: dict, output_dir: Path) -> list[str]:
+def write_figures(rows: list[dict], output_dir: Path) -> list[str]:
     if not rows:
+        return []
+    has_metric_signal = any(
+        row[metric] > 0
+        for row in rows
+        for metric in ("rps", "p95_latency", "error_rate", "inprogress")
+    )
+    has_replica_change = len({row["replicas"] for row in rows}) > 1
+    if not has_metric_signal and not has_replica_change:
         return []
     x = [row["cycle"] for row in rows]
     generated: list[str] = []
 
     def response(plt):
-        fig, axes = plt.subplots(2, 1, figsize=(11, 7), sharex=True)
-        axes[0].plot(x, [row["rps"] for row in rows], label="RPS", color="#1769aa")
-        axes[0].set_ylabel("RPS")
-        axes[1].step(x, [row["replicas"] for row in rows], where="mid", label="Current replicas", color="#188977")
-        axes[1].step(x, [row["desired_replicas"] or row["replicas"] for row in rows], where="mid", label="Desired replicas", color="#d1495b", linestyle="--")
+        fig, axes = plt.subplots(3, 1, figsize=(12, 9), sharex=True)
+        rps = [row["rps"] for row in rows]
+        replicas = [row["replicas"] for row in rows]
+        desired = [row["desired_replicas"] or row["replicas"] for row in rows]
+        latency = [row["p95_latency"] for row in rows]
+        errors = [row["error_rate"] for row in rows]
+
+        axes[0].plot(x, rps, label="Observed RPS", color="#1769aa", linewidth=2)
+        axes[0].fill_between(x, rps, color="#1769aa", alpha=0.12)
+        axes[0].set_ylabel("Requests / second")
+        axes[0].legend(loc="upper left")
+
+        axes[1].step(x, replicas, where="mid", label="Current replicas", color="#188977", linewidth=2)
+        axes[1].step(x, desired, where="mid", label="Desired replicas", color="#d1495b", linestyle="--", linewidth=2)
+        for row in rows:
+            if row["scaled"]:
+                axes[1].axvline(row["cycle"], color="#ed8936", alpha=0.4, linewidth=1)
         axes[1].set_ylabel("Replicas")
-        axes[1].set_xlabel("Control cycle")
-        axes[0].legend()
-        axes[1].legend()
+        axes[1].legend(loc="upper left")
 
-    path = output_dir / "figure_1_control_response.png"
+        axes[2].plot(x, latency, label="p95 latency", color="#d1495b", linewidth=2)
+        axes[2].axhline(0.4, color="#d1495b", linestyle="--", alpha=0.8, label="Latency SLO")
+        error_axis = axes[2].twinx()
+        error_axis.plot(x, errors, label="Error rate", color="#6b4fbb", linewidth=1.8)
+        error_axis.axhline(0.05, color="#6b4fbb", linestyle="--", alpha=0.8, label="Error SLO")
+        axes[2].set_ylabel("Latency (s)")
+        error_axis.set_ylabel("Error rate")
+        axes[2].set_xlabel("Control cycle")
+        handles, labels = axes[2].get_legend_handles_labels()
+        error_handles, error_labels = error_axis.get_legend_handles_labels()
+        axes[2].legend(handles + error_handles, labels + error_labels, loc="upper left")
+
+        for axis in axes:
+            axis.grid(alpha=0.25)
+        if max(rps, default=0) == 0:
+            axes[0].text(0.5, 0.5, "No RPS signal recorded", transform=axes[0].transAxes, ha="center", va="center")
+        if max(latency, default=0) == 0 and max(errors, default=0) == 0:
+            axes[2].text(0.5, 0.5, "No latency or error signal recorded", transform=axes[2].transAxes, ha="center", va="center")
+        fig.subplots_adjust(hspace=0.28)
+
+    path = output_dir / "control_response.png"
     if _save_figure(path, "Workload-to-control response", response):
-        generated.append(path.name)
-
-    def slo(plt):
-        fig, axes = plt.subplots(2, 1, figsize=(11, 7), sharex=True)
-        axes[0].plot(x, [row["p95_latency"] for row in rows], color="#d1495b")
-        axes[0].axhline(0.4, color="black", linestyle="--", label="SLO threshold")
-        axes[0].set_ylabel("p95 latency (s)")
-        axes[0].legend()
-        axes[1].plot(x, [row["error_rate"] for row in rows], color="#ed8936")
-        axes[1].axhline(0.05, color="black", linestyle="--", label="SLO threshold")
-        axes[1].set_ylabel("Error rate")
-        axes[1].set_xlabel("Control cycle")
-        axes[1].legend()
-
-    path = output_dir / "figure_2_slo_protection.png"
-    if _save_figure(path, "SLO protection over the control loop", slo):
-        generated.append(path.name)
-
-    def efficiency(plt):
-        plt.figure(figsize=(11, 4.5))
-        plt.plot(x, [row["rps"] / max(row["replicas"], 1) for row in rows], color="#6b4fbb")
-        plt.xlabel("Control cycle")
-        plt.ylabel("RPS per replica")
-
-    path = output_dir / "figure_3_efficiency.png"
-    if _save_figure(path, "Replica efficiency", efficiency):
-        generated.append(path.name)
-
-    def stability(plt):
-        counts = Counter(row["action"] for row in rows)
-        plt.bar(list(counts), [counts[action] for action in counts], color="#188977")
-        plt.ylabel("Cycles")
-        plt.xlabel("Final action")
-
-    path = output_dir / "figure_4_policy_stability.png"
-    if _save_figure(path, "Policy actions and stability", stability):
-        generated.append(path.name)
-
-    def sensitivity(plt):
-        names = list(ablation)
-        changed = [ablation[name]["changed_from_recorded"] for name in names]
-        plt.bar(names, changed, color="#d1495b")
-        plt.xticks(rotation=20, ha="right")
-        plt.ylabel("Decisions changed from recorded policy")
-
-    path = output_dir / "figure_5_weight_sensitivity.png"
-    if _save_figure(path, "Weight sensitivity ablation", sensitivity):
         generated.append(path.name)
     return generated
 
@@ -277,9 +209,14 @@ def build_markdown(summary: dict, figures: list[str]) -> str:
     ]
     for figure in figures:
         lines.extend([f"![{figure}]({figure})", ""])
+    if not figures:
+        lines.extend([
+            "No figure was generated because the audit data contains no workload or control signal.",
+            "Check that the demo app is reachable before the k6 run and that Prometheus is scraping it.",
+            "",
+        ])
     lines.extend([
         "## Interpretation note", "",
-        "Weight sensitivity is a counterfactual decision ablation using recorded penalty components. It reports how often the selected action would change; it does not simulate the future cluster response after that action.",
         "Supplementary replica correlations are descriptive associations over audit cycles, not causal effects.", "",
     ])
     return "\n".join(lines)
@@ -298,7 +235,7 @@ def main() -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     events = load_events(Path(args.jsonl), args.limit)
     summary = summarize(events, args.latency_threshold, args.error_threshold)
-    figures = write_figures(_rows(events), summary["weight_sensitivity"], output_dir)
+    figures = write_figures(_rows(events), output_dir)
     (output_dir / "metrics.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
     (output_dir / "report.md").write_text(build_markdown(summary, figures), encoding="utf-8")
     print(f"Wrote paper-oriented insights for {len(events)} audit events to {output_dir}")
