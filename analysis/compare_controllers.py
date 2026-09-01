@@ -25,27 +25,64 @@ def _response_metric(summary: dict, field: str) -> float | None:
     return expected if expected is not None else _metric(summary, "http_req_duration", field)
 
 
+def _replica_metrics(run_dir: Path) -> dict:
+    samples: list[dict] = []
+    for path in run_dir.glob("*_replica_samples.jsonl"):
+        for line in path.read_text(encoding="utf-8").splitlines():
+            try:
+                sample = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(sample, dict):
+                samples.append(sample)
+    if not samples:
+        return {}
+
+    samples.sort(key=lambda sample: float(sample.get("timestamp_epoch", 0)))
+    replicas = [float(sample.get("current_replicas", 0)) for sample in samples]
+    replica_seconds = sum(
+        float(previous.get("current_replicas", 0))
+        * max(0.0, float(current["timestamp_epoch"]) - float(previous["timestamp_epoch"]))
+        for previous, current in zip(samples, samples[1:])
+    )
+    return {
+        "avg_replicas": round(sum(replicas) / len(replicas), 4),
+        "max_replicas": max(replicas),
+        "scaling_events": sum(
+            replicas[index] != replicas[index - 1] for index in range(1, len(replicas))
+        ),
+        "replica_seconds": round(replica_seconds, 2),
+    }
+
+
 def _run_metrics(run_dir: Path) -> dict:
     summaries = sorted(run_dir.glob("*_summary.json"))
     if not summaries:
         return {}
     summary = _load(summaries[0])
+    failed_rate = _metric(summary, "http_req_failed", "value")
+    duration = summary.get("metrics", {}).get("http_req_duration", {})
     values = {
         "p95_latency_ms": _response_metric(summary, "p(95)"),
         "avg_latency_ms": _response_metric(summary, "avg"),
-        "failed_rate": _metric(summary, "http_req_failed", "value"),
+        "failed_rate": failed_rate,
         "iterations": _metric(summary, "iterations", "count"),
         "http_requests": _metric(summary, "http_reqs", "count"),
         "max_vus": _metric(summary, "vus_max", "value"),
+        "valid_run": not (
+            failed_rate is None
+            or failed_rate >= 1.0
+            or not duration
+            or float(duration.get("max", 0) or 0) <= 0
+        ),
     }
+    values.update(_replica_metrics(run_dir))
     insights_path = run_dir / "insights" / "metrics.json"
     if insights_path.exists():
         insights = _load(insights_path)
         values["slo_violation_ratio"] = insights.get("slo_violation_ratio", {}).get(
             "combined"
         )
-        values["avg_replicas"] = insights.get("averages", {}).get("replicas")
-        values["scaled_events"] = insights.get("scaled_events")
         values["vetoed_events"] = insights.get("control_stability", {}).get(
             "vetoed_events"
         )
@@ -68,6 +105,7 @@ def _run_metrics_by_profile(run_dir: Path) -> dict[str, dict]:
             "http_requests": _metric(summary, "http_reqs", "count"),
             "max_vus": _metric(summary, "vus_max", "value"),
         }
+        results[profile].update(_replica_metrics(run_dir))
         insights_path = run_dir / "insights" / "metrics.json"
         if insights_path.exists():
             insights = _load(insights_path)
@@ -76,8 +114,6 @@ def _run_metrics_by_profile(run_dir: Path) -> dict[str, dict]:
                     "slo_violation_ratio": insights.get("slo_violation_ratio", {}).get(
                         "combined"
                     ),
-                    "avg_replicas": insights.get("averages", {}).get("replicas"),
-                    "scaled_events": insights.get("scaled_events"),
                     "vetoed_events": insights.get("control_stability", {}).get(
                         "vetoed_events"
                     ),
@@ -98,7 +134,7 @@ def _delta(agentic: float | None, hpa: float | None) -> float | None:
 def compare(agentic_dir: Path, hpa_dir: Path) -> dict:
     agentic = _run_metrics(agentic_dir)
     hpa = _run_metrics(hpa_dir)
-    keys = sorted(set(agentic) | set(hpa))
+    keys = sorted((set(agentic) | set(hpa)) - {"valid_run"})
     metric_labels = {
         "p95_latency_ms": "Waiting time (p95)",
         "avg_latency_ms": "Average waiting time",
@@ -106,8 +142,10 @@ def compare(agentic_dir: Path, hpa_dir: Path) -> dict:
         "iterations": "Completed requests",
         "http_requests": "Total requests",
         "avg_replicas": "Average workers (replicas)",
+        "max_replicas": "Peak workers (replicas)",
         "slo_violation_ratio": "SLO violations",
-        "scaled_events": "Scaling actions",
+        "scaling_events": "Scaling actions",
+        "replica_seconds": "Total worker time",
         "vetoed_events": "Safety blocks",
         "transition_rate": "Action changes",
         "max_vus": "Max VUs",
@@ -128,6 +166,12 @@ def compare(agentic_dir: Path, hpa_dir: Path) -> dict:
         }
     return {
         "controllers": {"agentic": agentic, "hpa": hpa},
+        "validity": {
+            "agentic": agentic.get("valid_run", False),
+            "hpa": hpa.get("valid_run", False),
+            "comparable": agentic.get("valid_run", False) and hpa.get("valid_run", False),
+            "reason": "Both runs must contain successful HTTP responses and non-zero latency measurements.",
+        },
         "delta_agentic_vs_hpa_pct": {
             key: _delta(agentic.get(key), hpa.get(key)) for key in keys
         },
@@ -140,6 +184,8 @@ def compare(agentic_dir: Path, hpa_dir: Path) -> dict:
                 "failed_rate",
                 "slo_violation_ratio",
                 "avg_replicas",
+                "max_replicas",
+                "replica_seconds",
                 "vetoed_events",
                 "transition_rate",
             ],
@@ -202,6 +248,8 @@ def markdown(result: dict, figure_name: str | None) -> str:
         return "not measured" if value is None else str(value)
 
     def winner_for(key: str, left_values: dict, right_values: dict) -> str:
+        if not result.get("validity", {}).get("comparable", False):
+            return "invalid run"
         left = left_values.get(key)
         right = right_values.get(key)
         if left is None or right is None:
@@ -220,6 +268,13 @@ def markdown(result: dict, figure_name: str | None) -> str:
         "| What we measured | Agentic | HPA | Winner |",
         "|---|---:|---:|---|",
     ]
+
+    if not result.get("validity", {}).get("comparable", False):
+        lines.extend([
+            "",
+            "> **STOP: invalid comparison.** The load test did not record successful HTTP responses. Fix the service reachability before comparing controllers.",
+            "",
+        ])
 
     for key in common_keys:
         lines.append(
@@ -250,6 +305,7 @@ def markdown(result: dict, figure_name: str | None) -> str:
             "duration is identical.",
             "- `not measured` means that controller did not produce the needed data, "
             "so that row must not be used as evidence.",
+            "- A run with 100% failed requests or zero latency is invalid and has no winner.",
             "- This is one experiment, not proof that one controller is always better.",
             "",
         ]

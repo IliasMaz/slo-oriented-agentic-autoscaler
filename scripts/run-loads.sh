@@ -3,6 +3,55 @@
 set -uo pipefail
 
 AGGREGATE_LOG_FILE=""
+APP_PORT_FORWARD_PID=""
+
+capture_replica_samples() {
+  local output_path="$1"
+  while true; do
+    local snapshot
+    snapshot="$(kubectl get deployment demo-app -n thesis-autoscaling \
+      -o jsonpath='{.spec.replicas},{.status.readyReplicas}' 2>/dev/null || true)"
+    if [ -n "$snapshot" ]; then
+      local desired current
+      desired="${snapshot%,*}"
+      current="${snapshot#*,}"
+      printf '{"timestamp_epoch":%s,"desired_replicas":%s,"current_replicas":%s}\n' \
+        "$(date +%s)" "${desired:-0}" "${current:-0}" >> "$output_path"
+    fi
+    sleep 5
+  done
+}
+
+cleanup_app_port_forward() {
+  if [ -n "$APP_PORT_FORWARD_PID" ]; then
+    kill "$APP_PORT_FORWARD_PID" 2>/dev/null || true
+  fi
+}
+trap cleanup_app_port_forward EXIT INT TERM
+
+ensure_app_reachable() {
+  if curl -fsS --max-time 2 http://localhost:8000/health >/dev/null 2>&1; then
+    return 0
+  fi
+
+  kubectl port-forward svc/demo-app 8000:8000 -n thesis-autoscaling \
+    > "${TMPDIR:-/tmp}/demo-app-port-forward.log" 2>&1 &
+  APP_PORT_FORWARD_PID=$!
+
+  for _ in $(seq 1 30); do
+    if curl -fsS --max-time 2 http://localhost:8000/health >/dev/null 2>&1; then
+      return 0
+    fi
+    if ! kill -0 "$APP_PORT_FORWARD_PID" 2>/dev/null; then
+      echo "ERROR: demo app port-forward failed; see ${TMPDIR:-/tmp}/demo-app-port-forward.log" >&2
+      return 1
+    fi
+    sleep 1
+  done
+
+  echo "ERROR: demo app is not reachable at http://localhost:8000" >&2
+  return 1
+}
 
 stage_log() {
   local stage="$1"
@@ -387,7 +436,7 @@ run_post_run_insights() {
     echo "[analysis] audit_payloads=${audit_payloads_path}"
     echo "[analysis] metrics_json=${insights_dir}/metrics.json"
     echo "[analysis] report_markdown=${insights_dir}/report.md"
-    echo "[analysis] figures_dir=${insights_dir}"
+    echo "[analysis] control_response=${insights_dir}/control_response.png"
     echo "[analysis] analysis_log=${insights_dir}/analysis.log"
   } >> "$AGGREGATE_LOG_FILE"
 }
@@ -553,6 +602,9 @@ status_file="${run_dir}/status.txt"
 echo "Run directory: $run_dir"
 stage_log "initialized" "run_dir=${run_dir} parallel=${parallel_mode} dry_run=${dry_run} profiles=${requested_profiles[*]}"
 append_system_health_status "$AGGREGATE_LOG_FILE"
+if [ "$dry_run" -eq 0 ]; then
+  ensure_app_reachable
+fi
 audit_start_count="$(get_audit_event_count)"
 echo "[aggregate] audit_start_count=${audit_start_count}" >> "$AGGREGATE_LOG_FILE"
 
@@ -564,6 +616,8 @@ run_one() {
   local start_replicas
   local started_at_utc
   local control_log_start_offset
+  local replica_sampler_pid=""
+  local replica_samples_path="${run_dir}/${profile}_replica_samples.jsonl"
 
   start_replicas="$(detect_start_replicas)"
   started_at_utc="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -579,6 +633,11 @@ run_one() {
   } > "$log_path"
   append_system_health_status "$AGGREGATE_LOG_FILE"
   append_profile_jsonl "$jsonl_path" "profile_start" "$profile" "$dry_run" "-1" "" "$log_path" "$start_replicas" "$autoscaler_timeline_log"
+
+  if [ "$dry_run" -eq 0 ]; then
+    capture_replica_samples "$replica_samples_path" &
+    replica_sampler_pid=$!
+  fi
 
   if [ "$dry_run" -eq 1 ]; then
     {
@@ -596,6 +655,10 @@ run_one() {
 
   k6 run "load/${profile}.js" --summary-export "$summary_path" >> "$log_path" 2>&1
   local exit_code=$?
+  if [ -n "$replica_sampler_pid" ]; then
+    kill "$replica_sampler_pid" 2>/dev/null || true
+    wait "$replica_sampler_pid" 2>/dev/null || true
+  fi
   append_autoscaler_diagnostics "$log_path"
   append_aggregate_autoscaler_window "$profile" "$control_log_start_offset" "$log_path"
   printf '%s exit_code=%s\n' "$profile" "$exit_code" >> "$status_file"
