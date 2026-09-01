@@ -10,14 +10,14 @@ import { check, sleep } from "k6";
 
 export const options = {
   stages: [
-    { duration: "1m", target: 5 },
-    { duration: "2m", target: 15 },
+    { duration: "1m", target: 10 },
+    { duration: "2m", target: 30 },
+    { duration: "1m", target: 70 },
+    { duration: "1m", target: 40 },
+    { duration: "2m", target: 55 },
+    { duration: "45s", target: 100 },
     { duration: "1m", target: 35 },
-    { duration: "1m", target: 20 },
-    { duration: "2m", target: 28 },
-    { duration: "45s", target: 50 },
-    { duration: "1m", target: 18 },
-    { duration: "1m", target: 8 },
+    { duration: "1m", target: 15 },
   ],
   thresholds: {
     http_req_failed: ["rate<0.08"],

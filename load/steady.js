@@ -6,7 +6,7 @@ import { sleep } from "k6";
 // Useful as a baseline to observe normal autoscaler behavior.
 
 export const options = {
-  vus: 15,
+  vus: 30,
   duration: "5m",
 };
 

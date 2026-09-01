@@ -6,7 +6,7 @@ import { sleep } from "k6";
 // Useful for observing stability, cooldown behavior, and sustained SLO tracking.
 
 export const options = {
-  vus: 20,
+  vus: 40,
   duration: "10m",
 };
 
