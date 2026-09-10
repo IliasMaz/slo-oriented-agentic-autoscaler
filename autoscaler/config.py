@@ -71,15 +71,15 @@ AUDIT_DB_NAME = get_env("AUDIT_DB_NAME", "autoscaler")
 AUDIT_DB_USER = get_env("AUDIT_DB_USER", "autoscaler")
 AUDIT_DB_PASSWORD = get_env("AUDIT_DB_PASSWORD", "autoscaler")
 
-# AI provider configuration. Legacy OPENAI_* variables remain fallbacks.
-AI_API_KEY = get_env("AI_API_KEY", get_env("OPENAI_API_KEY", ""))
-AI_MODEL = get_env("AI_MODEL", get_env("OPENAI_MODEL", "gpt-5"))
-AI_AGENT_ENABLED = get_env("AI_AGENT_ENABLED", get_env("OPENAI_AGENT_ENABLED", "false")).lower() == "true"
-AI_TIMEOUT_SECONDS = get_env_float("AI_TIMEOUT_SECONDS", get_env_float("OPENAI_TIMEOUT_SECONDS", 10.0))
-AI_INPUT_COST_PER_1M_TOKENS = get_env_float("AI_INPUT_COST_PER_1M_TOKENS", get_env_float("OPENAI_INPUT_COST_PER_1M_TOKENS", 0.0))
-AI_OUTPUT_COST_PER_1M_TOKENS = get_env_float("AI_OUTPUT_COST_PER_1M_TOKENS", get_env_float("OPENAI_OUTPUT_COST_PER_1M_TOKENS", 0.0))
-AI_MAX_TOTAL_COST_USD = get_env_float("AI_MAX_TOTAL_COST_USD", get_env_float("OPENAI_MAX_TOTAL_COST_USD", 0.0))
-AI_MAX_TOTAL_TOKENS = get_env_int("AI_MAX_TOTAL_TOKENS", get_env_int("OPENAI_MAX_TOTAL_TOKENS", 0))
+# AI provider configuration.
+AI_API_KEY = get_env("AI_API_KEY", "")
+AI_MODEL = get_env("AI_MODEL", "gpt-5")
+AI_AGENT_ENABLED = get_env("AI_AGENT_ENABLED", "false").lower() == "true"
+AI_TIMEOUT_SECONDS = get_env_float("AI_TIMEOUT_SECONDS", 10.0)
+AI_INPUT_COST_PER_1M_TOKENS = get_env_float("AI_INPUT_COST_PER_1M_TOKENS", 0.0)
+AI_OUTPUT_COST_PER_1M_TOKENS = get_env_float("AI_OUTPUT_COST_PER_1M_TOKENS", 0.0)
+AI_MAX_TOTAL_COST_USD = get_env_float("AI_MAX_TOTAL_COST_USD", 0.0)
+AI_MAX_TOTAL_TOKENS = get_env_int("AI_MAX_TOTAL_TOKENS", 0)
 
 # Weighting factors for the scoring function
 WEIGHT_LATENCY = get_env_float("WEIGHT_LATENCY", 0.3) #This is the weight for the latency metric.

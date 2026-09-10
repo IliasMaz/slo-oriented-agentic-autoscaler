@@ -39,10 +39,10 @@ def _extract_row(payload: dict) -> tuple:
     profile_name = payload.get("profile_name")
     cycle_id = payload.get("cycle_id")
 
-    openai_recommendation = None
+    ai_recommendation = None
     for recommendation in payload.get("recommendations", []):
         if recommendation.get("agent_name") == "ai_agent":
-            openai_recommendation = recommendation
+            ai_recommendation = recommendation
             break
 
     return (
@@ -58,9 +58,9 @@ def _extract_row(payload: dict) -> tuple:
         snapshot.get("p95_latency"),
         snapshot.get("inprogress"),
         snapshot.get("current_replicas"),
-        None if openai_recommendation is None else openai_recommendation.get("action"),
-        None if openai_recommendation is None else openai_recommendation.get("confidence"),
-        None if openai_recommendation is None else openai_recommendation.get("reason"),
+        None if ai_recommendation is None else ai_recommendation.get("action"),
+        None if ai_recommendation is None else ai_recommendation.get("confidence"),
+        None if ai_recommendation is None else ai_recommendation.get("reason"),
         json.dumps(payload),
     )
 
@@ -87,9 +87,9 @@ def _ensure_sqlite_ready() -> None:
                 p95_latency REAL,
                 inprogress INTEGER,
                 current_replicas INTEGER,
-                openai_action TEXT,
-                openai_confidence REAL,
-                openai_reason TEXT,
+                ai_action TEXT,
+                ai_confidence REAL,
+                ai_reason TEXT,
                 payload_json TEXT NOT NULL
             )
             """
@@ -139,9 +139,9 @@ def _ensure_postgres_ready() -> None:
                     p95_latency DOUBLE PRECISION,
                     inprogress INTEGER,
                     current_replicas INTEGER,
-                    openai_action TEXT,
-                    openai_confidence DOUBLE PRECISION,
-                    openai_reason TEXT,
+                    ai_action TEXT,
+                    ai_confidence DOUBLE PRECISION,
+                    ai_reason TEXT,
                     payload_json JSONB NOT NULL
                 )
                 """
@@ -198,9 +198,9 @@ def _write_audit_sqlite(payload: dict) -> None:
                 p95_latency,
                 inprogress,
                 current_replicas,
-                openai_action,
-                openai_confidence,
-                openai_reason,
+                ai_action,
+                ai_confidence,
+                ai_reason,
                 payload_json
             )
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -242,9 +242,9 @@ def _write_audit_postgres(payload: dict) -> None:
                     p95_latency,
                     inprogress,
                     current_replicas,
-                    openai_action,
-                    openai_confidence,
-                    openai_reason,
+                    ai_action,
+                    ai_confidence,
+                    ai_reason,
                     payload_json
                 )
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb)

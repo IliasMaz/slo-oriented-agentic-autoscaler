@@ -4,7 +4,7 @@ with budget telemetry.
 """
 
 import json
-from openai import OpenAI
+from openai import OpenAI as AIClient
 from prometheus_client import Counter
 
 # Import configuration constants
@@ -273,7 +273,7 @@ def ai_decision_agent(metrics: MetricsSnapshot) -> AgentRecommendation:
         return fallback(metrics, reason)
 
     try:
-        client = OpenAI(api_key=AI_API_KEY, timeout=AI_TIMEOUT_SECONDS)
+        client = AIClient(api_key=AI_API_KEY, timeout=AI_TIMEOUT_SECONDS)
 
         prompt = build_prompt(metrics)
         if hasattr(client, "responses"):
