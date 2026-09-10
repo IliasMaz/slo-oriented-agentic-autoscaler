@@ -15,10 +15,7 @@
 > portfolio presentation.
 
 > Active experiment workflow: `scripts/run-loads.sh` for one controller run and
-> `scripts/compare-agentic-hpa.sh` for matched Agentic-versus-HPA runs. See
-> [documentation/RUNBOOK.md](documentation/RUNBOOK.md) for commands and
-> [documentation/MVP_CLEANUP.md](documentation/MVP_CLEANUP.md) for the current
-> analysis scope.
+> `scripts/compare-agentic-hpa.sh` for matched Agentic-versus-HPA runs.
 
 ---
 
@@ -61,7 +58,7 @@ The stack is split into cooperating layers, each with a clear role.
 ### 2) Decision Layer
 
 - `autoscaler/` runs the control loop.
-- Agent recommendations are produced for latency, error, throughput, saturation, and optionally OpenAI.
+- Agent recommendations are produced for latency, error, throughput, saturation, and optionally AI.
 - Arbitration chooses the minimum-penalty action candidate.
 - Safety gate vetoes risky actions and enforces anti-thrashing policies.
 
@@ -308,9 +305,9 @@ Fields:
 - `p95_latency` (double precision)
 - `inprogress` (integer)
 - `current_replicas` (integer)
-- `openai_action` (text)
-- `openai_confidence` (double precision)
-- `openai_reason` (text)
+- `ai_action` (text)
+- `ai_confidence` (double precision)
+- `ai_reason` (text)
 - `payload_json` (jsonb, full cycle payload)
 
 Primary index:
@@ -363,29 +360,29 @@ Primary index:
 - What it means: observed error fraction at decision time.
 - Why it matters: guards reliability during scale-down and noisy periods.
 
-### OpenAI Metrics (optional decision augmentation)
+### AI Metrics (optional decision augmentation)
 
-1. `openai_agent_requests_total`
+1. `ai_agent_requests_total`
 
-- What it means: OpenAI call count grouped by outcome (`success`, `error`, `budget_exceeded`, etc).
+- What it means: AI call count grouped by outcome (`success`, `error`, `budget_exceeded`, etc).
 - Why it matters: confirms reliability and guardrail fallback behavior.
 
-2. `openai_agent_prompt_tokens_total`
+2. `ai_agent_prompt_tokens_total`
 
 - What it means: cumulative prompt/input tokens.
 - Why it matters: cost driver for request input size.
 
-3. `openai_agent_completion_tokens_total`
+3. `ai_agent_completion_tokens_total`
 
 - What it means: cumulative completion/output tokens.
 - Why it matters: cost driver for model response size.
 
-4. `openai_agent_tokens_total`
+4. `ai_agent_tokens_total`
 
 - What it means: cumulative total tokens.
 - Why it matters: budget cap and trend tracking.
 
-5. `openai_agent_estimated_cost_usd_total`
+5. `ai_agent_estimated_cost_usd_total`
 
 - What it means: estimated cumulative USD cost from configured token prices.
 - Why it matters: ensures autoscaling intelligence stays within operational budget.
@@ -413,9 +410,9 @@ Use dashboard panels as a causal chain, not isolated charts.
 - `desired` rising before `actual` is normal short control lag.
 - Repeated up/down sawtooth pattern suggests policy too aggressive or thresholds too tight.
 
-5. OpenAI Tokens + Cost
+5. AI Tokens + Cost
 
-- Token growth with normal decision quality is expected when OpenAI is enabled.
+- Token growth with normal decision quality is expected when AI is enabled.
 - `budget_exceeded` outcomes indicate guardrails are actively protecting cost.
 
 6. Vetoed Decisions
@@ -430,7 +427,7 @@ Use dashboard panels as a causal chain, not isolated charts.
 - p95 and error near thresholds,
 - replicas adjust without frequent reversals,
 - veto rate low/moderate,
-- no uncontrolled OpenAI cost growth.
+- no uncontrolled AI cost growth.
 
 2. Likely under-provisioned
 
