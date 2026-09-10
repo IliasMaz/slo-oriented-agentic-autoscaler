@@ -1,213 +1,203 @@
-"""Decision arbitration placeholder."""
+"""Evidence-based arbitration for autoscaling actions."""
 
 from channel_logging import get_channel_logger, log_event
-
 from config import (
-    ACTION_EFFECT_DOWN,
-    ACTION_EFFECT_HOLD,
-    ACTION_EFFECT_UP,
     ERROR_RATE_THRESHOLD,
     INPROGRESS_THRESHOLD,
     LATENCY_P95_THRESHOLD,
     MAX_REPLICAS,
     MIN_REPLICAS,
     PER_REPLICA_RPS_THRESHOLD,
+    SCALE_DOWN_RELEASE_MARGIN,
     SCALE_DOWN_STEP,
     SCALE_UP_STEP,
-    WEIGHT_AGENT_DISAGREEMENT,
-    WEIGHT_COST,
-    WEIGHT_ERROR,
-    WEIGHT_LATENCY,
-    WEIGHT_SATURATION,
-    WEIGHT_THROUGHPUT,
 )
-
-from models import (
-    ActionScore,
-    AgentRecommendation,
-    AggregatedDecision,
-    MetricsSnapshot,
-)
+from models import ActionScore, AgentRecommendation, ArbitratedDecision, MetricsSnapshot
 
 
 arbitration_log = get_channel_logger("arbitration")
 
-# This is a placeholder for the arbitration logic. The actual implementation would involve more complex decision-making based on the metrics and recommendations from different agents.
 
-# clamping functions to ensure values stay within defined bounds
-def clamp(value:int)->int:
-    """Clamp value to be within the min and max replicas."""
+def clamp(value: int) -> int:
+    """Keep a desired replica count inside the configured bounds."""
     return max(MIN_REPLICAS, min(MAX_REPLICAS, value))
 
-# normalization functions to scale metrics to a common range for comparison
-def normalize_ratio(value:float, threshold:float)->float:
-    """Normalize a ratio value to be between 0 and 1 based on a threshold."""
-    return min(value / threshold, 2.0)  # Cap at 2.0 to avoid extreme values
 
-# normalization functions to scale metrics to a common range for comparison
-def normalize_cost(replicas:int)->float:
-    """Normalize cost based on the number of replicas."""
-    return (replicas - MIN_REPLICAS) / (MAX_REPLICAS - MIN_REPLICAS)
-
-# action effect function to determine the impact of an action on the system
-def action_effect(action: str) -> float:
-    if action == "scale_up":
-        return ACTION_EFFECT_UP
-    if action == "scale_down":
-        return ACTION_EFFECT_DOWN
-    return ACTION_EFFECT_HOLD
-
-# desired replicas function to calculate the target number of replicas based on the action
 def desired_replicas_for_action(metrics: MetricsSnapshot, action: str) -> int:
+    """Return the one-step target associated with an action."""
     if action == "scale_up":
         return clamp(metrics.current_replicas + SCALE_UP_STEP)
     if action == "scale_down":
         return clamp(metrics.current_replicas - SCALE_DOWN_STEP)
     return metrics.current_replicas
 
-def disagreement_penalty(action: str, agent_recommendations: list[AgentRecommendation]) -> float:
-    """Calculate a penalty based on the level of disagreement among agents."""
 
-    penalty = 0.0
-    total_confidence = 0.0
+def select_deterministic_action(metrics: MetricsSnapshot) -> tuple[str, str]:
+    """Select an action using explicit, auditable policy priorities.
 
-    for req in agent_recommendations:
-        total_confidence += req.confidence
-        if req.action != action:
-            penalty += req.confidence
-
-    if total_confidence == 0:
-        return 0.0
-
-    return (penalty / total_confidence)
-
-# compute_action_score function to evaluate the score of a given action based on metrics and agent recommendations
-def compute_action_score(
-    metrics: MetricsSnapshot,
-    recommendations: list[AgentRecommendation],
-    action: str,
-) -> ActionScore:
-    factor = action_effect(action)
-    desired_replicas = desired_replicas_for_action(metrics, action)
+    Safety-critical SLO pressure has priority over cost reduction. Scale-down is
+    allowed only after every release condition is comfortably healthy.
+    """
+    scale_up_reasons = []
     per_replica_rps = metrics.rps / max(metrics.current_replicas, 1)
-    throughput_pressure = max(0.0, per_replica_rps / max(PER_REPLICA_RPS_THRESHOLD, 1e-9) - 1.0)
-    scale_up_confidence = sum(
-        rec.confidence for rec in recommendations if rec.action == "scale_up"
-    )
 
-    latency_penalty = (
-        normalize_ratio(metrics.p95_latency, LATENCY_P95_THRESHOLD) * factor
-    )
-    error_penalty = (
-        normalize_ratio(metrics.error_rate, ERROR_RATE_THRESHOLD) * factor
-    )
-    saturation_penalty = (
-        normalize_ratio(metrics.inprogress, INPROGRESS_THRESHOLD) * factor
-    )
-    throughput_penalty = (
-        normalize_ratio(per_replica_rps, PER_REPLICA_RPS_THRESHOLD) * factor
-    )
+    if metrics.p95_latency > LATENCY_P95_THRESHOLD:
+        scale_up_reasons.append("p95 latency exceeds threshold")
+    if metrics.error_rate > ERROR_RATE_THRESHOLD:
+        scale_up_reasons.append("error rate exceeds threshold")
+    if metrics.inprogress > INPROGRESS_THRESHOLD:
+        scale_up_reasons.append("in-progress requests exceed threshold")
+    if per_replica_rps > PER_REPLICA_RPS_THRESHOLD:
+        scale_up_reasons.append("per-replica throughput exceeds threshold")
 
-    if action == "scale_up":
-        cost_penalty = normalize_cost(desired_replicas) * 1.15
-    elif action == "scale_down":
-        cost_penalty = normalize_cost(desired_replicas) * 0.85
-    else:
-        cost_penalty = normalize_cost(desired_replicas)
+    if scale_up_reasons:
+        return "scale_up", "; ".join(scale_up_reasons)
 
-    agent_penalty = disagreement_penalty(action, recommendations)
-
-    if action == "hold":
-        # Holding while throughput is clearly above target is a costly decision.
-        # This prevents burst pressure from being suppressed by the minimum-penalty tie-break.
-        throughput_penalty += 1.5 * throughput_pressure
-        cost_penalty += 0.5 * throughput_pressure
-        agent_penalty += 0.25 * min(scale_up_confidence, 1.0)
-    elif action == "scale_up":
-        # Prefer scale-up when the throughput signal is strong and a scale-up vote exists.
-        throughput_penalty -= 0.35 * throughput_pressure
-        cost_penalty -= 0.2 * min(scale_up_confidence, 1.0)
-
-    total_score = (
-        WEIGHT_LATENCY * latency_penalty
-        + WEIGHT_ERROR * error_penalty
-        + WEIGHT_SATURATION * saturation_penalty
-        + WEIGHT_THROUGHPUT * throughput_penalty
-        + WEIGHT_COST * cost_penalty
-        + WEIGHT_AGENT_DISAGREEMENT * agent_penalty
+    release = SCALE_DOWN_RELEASE_MARGIN
+    can_scale_down = (
+        metrics.current_replicas > MIN_REPLICAS
+        and metrics.p95_latency <= LATENCY_P95_THRESHOLD * release
+        and metrics.error_rate <= ERROR_RATE_THRESHOLD * release
+        and metrics.inprogress <= INPROGRESS_THRESHOLD * release
+        and per_replica_rps <= PER_REPLICA_RPS_THRESHOLD * release
     )
+    if can_scale_down:
+        return "scale_down", "all release conditions are below the safety margin"
 
+    return "hold", "no scale-up pressure and scale-down release conditions are not all satisfied"
+
+
+def get_allowed_actions(metrics: MetricsSnapshot) -> set[str]:
+    """Return actions allowed by the hard policy rules."""
+    per_replica_rps = metrics.rps / max(metrics.current_replicas, 1)
+    hard_scale_up = (
+        metrics.p95_latency > LATENCY_P95_THRESHOLD
+        or metrics.error_rate > ERROR_RATE_THRESHOLD
+        or metrics.inprogress > INPROGRESS_THRESHOLD
+        or per_replica_rps > PER_REPLICA_RPS_THRESHOLD
+    )
+    if hard_scale_up:
+        return {"scale_up"}
+
+    release = SCALE_DOWN_RELEASE_MARGIN
+    safe_to_release = (
+        metrics.current_replicas > MIN_REPLICAS
+        and metrics.p95_latency <= LATENCY_P95_THRESHOLD * release
+        and metrics.error_rate <= ERROR_RATE_THRESHOLD * release
+        and metrics.inprogress <= INPROGRESS_THRESHOLD * release
+        and per_replica_rps <= PER_REPLICA_RPS_THRESHOLD * release
+    )
+    if safe_to_release:
+        return {"hold", "scale_down"}
+
+    return {"hold", "scale_up"} if metrics.current_replicas < MAX_REPLICAS else {"hold"}
+
+
+def _trace_score(metrics: MetricsSnapshot, action: str, selected_action: str) -> ActionScore:
+    """Represent the deterministic priority decision for existing audit consumers."""
     return ActionScore(
         action=action,
-        desired_replicas=desired_replicas,
-        latency_penalty=latency_penalty,
-        error_penalty=error_penalty,
-        saturation_penalty=saturation_penalty,
-        throughput_penalty=throughput_penalty,
-        cost_penalty=cost_penalty,
-        disagreement_penalty=agent_penalty,
-        total_score=total_score,
+        desired_replicas=desired_replicas_for_action(metrics, action),
+        latency_penalty=0.0,
+        error_penalty=0.0,
+        saturation_penalty=0.0,
+        throughput_penalty=0.0,
+        cost_penalty=0.0,
+        disagreement_penalty=0.0,
+        total_score=0.0 if action == selected_action else 1.0,
     )
 
-# arbitrate function to select the best action based on computed scores for each candidate action
+
 def arbitrate(
     metrics: MetricsSnapshot,
     recommendations: list[AgentRecommendation],
     cycle_id: int | None = None,
-) -> AggregatedDecision:
-    candidate_actions = ["scale_down", "hold", "scale_up"]
+) -> ArbitratedDecision:
+    """Review specialist evidence under hard metric constraints.
 
-    votes_by_agent = {rec.agent_name: rec.action for rec in recommendations}
-    vote_weights = {
-        rec.agent_name: rec.confidence for rec in recommendations
-    }
-    log_event(
-        arbitration_log,
-        "aggregation_input",
-        title="aggregation:input_votes",
-        cycle_id=cycle_id,
-        current_replicas=metrics.current_replicas,
-        votes_by_agent=votes_by_agent,
-        vote_weights=vote_weights,
+    Agents provide evidence. The decision review first enforces hard
+    constraints, then lets the AI provide a holistic recommendation only when
+    the state is ambiguous.
+    """
+    deterministic_action, deterministic_reason = select_deterministic_action(metrics)
+    allowed = get_allowed_actions(metrics)
+    selected_action = deterministic_action
+    reason = deterministic_reason
+    ai_recommendation = next(
+        (
+            recommendation for recommendation in recommendations
+            if recommendation.agent_name == "ai_agent"
+            and recommendation.vote_eligible
+        ),
+        None,
     )
-
+    if len(allowed) > 1 and ai_recommendation is not None:
+        if ai_recommendation.action in allowed:
+            selected_action = ai_recommendation.action
+            reason = (
+                f"AI reviewed the ambiguous state and selected {selected_action}; "
+                f"deterministic evidence: {deterministic_reason}"
+            )
+            decision_source = "ai_review"
+        else:
+            decision_source = "deterministic_policy"
+    elif len(allowed) == 1:
+        decision_source = "hard_constraint"
+    else:
+        decision_source = "deterministic_policy"
+    candidate_actions = ["scale_down", "hold", "scale_up"]
     scores = [
-        compute_action_score(metrics, recommendations, action)
+        _trace_score(metrics, action, selected_action)
         for action in candidate_actions
     ]
 
-    best = min(scores, key=lambda item: item.total_score)
-
+    log_event(
+        arbitration_log,
+        "decision_review_input",
+        title="arbitration:decision_review_input",
+        cycle_id=cycle_id,
+        current_replicas=metrics.current_replicas,
+        votes_by_agent={rec.agent_name: rec.action for rec in recommendations},
+        recommendation_confidences={rec.agent_name: rec.confidence for rec in recommendations},
+        vote_eligible={rec.agent_name: rec.vote_eligible for rec in recommendations},
+        deterministic_action=deterministic_action,
+        allowed_actions=sorted(allowed),
+        ai_considered=ai_recommendation is not None,
+    )
     for item in scores:
         log_event(
             arbitration_log,
-            "candidate_score",
-            title=f"aggregation:candidate:{item.action}",
+            "decision_review_candidate",
+            title=f"arbitration:candidate:{item.action}",
             cycle_id=cycle_id,
             action=item.action,
             desired_replicas=item.desired_replicas,
             total_score=item.total_score,
-            latency_penalty=item.latency_penalty,
-            error_penalty=item.error_penalty,
-            saturation_penalty=item.saturation_penalty,
-            throughput_penalty=item.throughput_penalty,
-            cost_penalty=item.cost_penalty,
-            disagreement_penalty=item.disagreement_penalty,
+            selected=item.action == selected_action,
+            allowed=item.action in allowed,
         )
 
+    selected = next(item for item in scores if item.action == selected_action)
     log_event(
         arbitration_log,
-        "candidate_selected",
-        title=f"aggregation:selected:{best.action}",
+        "decision_review_selected",
+        title=f"arbitration:selected:{selected_action}",
         cycle_id=cycle_id,
-        action=best.action,
-        desired_replicas=best.desired_replicas,
-        total_score=best.total_score,
+        action=selected_action,
+        desired_replicas=selected.desired_replicas,
+        reason=reason,
+        deterministic_action=deterministic_action,
+        allowed_actions=sorted(allowed),
+        decision_source=decision_source,
+        decision_reason=reason,
     )
-
-    return AggregatedDecision(
-        action=best.action,
-        desired_replicas=best.desired_replicas,
-        reason="minimum-penalty arbitration selected candidate action",
+    return ArbitratedDecision(
+        action=selected_action,
+        desired_replicas=selected.desired_replicas,
+        reason=reason,
         scores=scores,
+        deterministic_action=deterministic_action,
+        allowed_actions=sorted(allowed),
+        decision_source=decision_source,
+        decision_reason=reason,
     )

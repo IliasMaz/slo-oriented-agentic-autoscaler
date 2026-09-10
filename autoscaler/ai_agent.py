@@ -17,6 +17,7 @@ from config import (
     AI_AGENT_ENABLED,
     AI_API_KEY,
     AI_INPUT_COST_PER_1M_TOKENS,
+    AI_MAX_CONFIDENCE,
     AI_MAX_TOTAL_COST_USD,
     AI_MAX_TOTAL_TOKENS,
     AI_MODEL,
@@ -182,7 +183,7 @@ def build_prompt(metrics: MetricsSnapshot) -> str:
         "constraints": {
             "min_replicas": MIN_REPLICAS,
             "max_replicas": MAX_REPLICAS,
-            "allowed_actions": ["scale_up", "scale_down", "maintain"],
+            "allowed_actions": ["scale_up", "scale_down", "hold"],
         },
         "decision_rules": (
             "If latency or error rate is above threshold, prefer a conservative "
@@ -230,7 +231,7 @@ def parse_response(response: str, current_replicas: int) -> AgentRecommendation:
     except Exception:
         confidence = 0.5  # Default to 0.5 if parsing fails
 
-    confidence = max(0.0, min(1.0, confidence))  # Clamp between 0 and 1
+    confidence = max(0.0, min(AI_MAX_CONFIDENCE, confidence))
     reason = str(payload.get("reason", "AI agent fallback response."))
 
     if action == "hold":
@@ -254,6 +255,7 @@ def fallback(metrics: MetricsSnapshot, reason: str) -> AgentRecommendation:
         desired_replicas=getattr(metrics, "current_replicas", MIN_REPLICAS),
         confidence=0.1,
         reason=reason,
+        vote_eligible=False,
     )
 
 

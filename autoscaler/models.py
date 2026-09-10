@@ -19,6 +19,7 @@ class AgentRecommendation(BaseModel):
     desired_replicas: int
     confidence: float
     reason: str
+    vote_eligible: bool = True
 
 class ActionScore(BaseModel):
     """A score for a potential action."""
@@ -32,12 +33,20 @@ class ActionScore(BaseModel):
     disagreement_penalty: float
     total_score: float
 
-class AggregatedDecision(BaseModel):
-    """An aggregated decision from multiple agents."""
+class ArbitratedDecision(BaseModel):
+    """A reviewed decision from specialist agents and hard constraints."""
     action: str
     desired_replicas: int
     reason: str
     scores: list[ActionScore] = []
+    deterministic_action: str | None = None
+    allowed_actions: list[str] = []
+    decision_source: str = "deterministic_policy"
+    decision_reason: str = ""
+
+
+# Compatibility name for older audit/replay imports.
+AggregatedDecision = ArbitratedDecision
 
 class FinalDecision(BaseModel):
     """The final decision made by the autoscaler."""
