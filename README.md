@@ -1,9 +1,46 @@
 # Agentic Kubernetes Autoscaler
 
-A Kubernetes autoscaler that combines deterministic application signals with an
-optional AI review. The controller observes latency, errors, throughput and
-in-progress requests, then applies hard constraints and a safety gate before
-changing replicas.
+## The Problem
+
+Traditional Kubernetes HPA decisions usually rely on infrastructure metrics
+such as CPU utilization. CPU can remain healthy while users experience higher
+latency, growing queues or failed requests. Scaling from CPU alone can therefore
+react too late, use the wrong signal or waste replicas.
+
+## What the System Does
+
+This project implements an application-aware Agentic autoscaler. Every control cycle
+reads latency, error rate, throughput and in-progress requests, then combines
+four deterministic agents, an optional AI advisory agent, explicit action
+constraints and a final safety gate before changing replicas.
+
+The deterministic policy provides repeatable, auditable decisions. The AI agent
+does not replace that policy or control Kubernetes directly; it adds broader
+reasoning when several application signals interact or approach their limits.
+
+> **Deterministic agents provide precision and assurance. The AI agent provides coverage.**
+
+The goal is to protect application SLOs while keeping scaling explainable,
+observable and cost-aware, then evaluate the result against Kubernetes HPA under
+the same workload and starting conditions.
+
+## Technology Stack
+
+| Technology        | Role                                                                           |
+| ----------------- | ------------------------------------------------------------------------------ |
+| Python            | Controller, agents, arbitration, safety and analysis code                      |
+| FastAPI + Uvicorn | Health and Prometheus endpoints for the autoscaler and demo app                |
+| Kubernetes        | Runs the application, controller and supporting services                       |
+| kind              | Local Kubernetes cluster for reproducible experiments                          |
+| LangGraph         | Orchestrates the metrics, agents, arbitration, safety, scaling and audit nodes |
+| Prometheus        | Collects application and autoscaler metrics                                    |
+| Grafana           | Visualizes latency, errors, traffic, replicas and controller behavior          |
+| OpenAI API        | Optional asynchronous AI advisory agent and post-run comparison analysis       |
+| k6                | Generates the fixed-rate and workload-specific load profiles                   |
+| Nginx load proxy  | Routes test traffic through the Kubernetes Service to application pods         |
+| Pydantic          | Defines validated metrics, recommendations and decision models                 |
+| SQLite/PostgreSQL | Stores audit payloads and decision records                                     |
+| Docker            | Builds the application and autoscaler images                                   |
 
 ## What It Provides
 
