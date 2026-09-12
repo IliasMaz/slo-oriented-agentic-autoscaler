@@ -9,7 +9,7 @@ spec:
     kind: Deployment
     name: demo-app
   minReplicas: 2
-  maxReplicas: 10
+  maxReplicas: 20
   behavior:
     scaleUp:
       stabilizationWindowSeconds: 0

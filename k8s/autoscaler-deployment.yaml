@@ -37,9 +37,15 @@ spec:
             - name: MIN_REPLICAS
               value: "2"
             - name: MAX_REPLICAS
-              value: "10"
+              value: "20"
             - name: POLL_INTERVAL_SECONDS
+              value: "3.5"
+            - name: LOG_CYCLE_AGGREGATION
               value: "5"
+            - name: LATENCY_ROLLING_WINDOW
+              value: "5"
+            - name: LATENCY_SCALE_DOWN_MARGIN
+              value: "0.85"
             - name: LATENCY_P95_THRESHOLD
               value: "0.40"
             - name: ERROR_RATE_THRESHOLD
@@ -49,9 +55,13 @@ spec:
             - name: PER_REPLICA_RPS_THRESHOLD
               value: "15"
             - name: SCALE_UP_STEP
-              value: "2"
+              value: "1"
             - name: SCALE_DOWN_STEP
               value: "1"
+            - name: SCALE_UP_PERSISTENCE_CYCLES
+              value: "2"
+            - name: SCALE_UP_IMMEDIATE_BREACH_RATIO
+              value: "1.25"
             - name: SCALE_UP_COOLDOWN_SECONDS
               value: "5"
             - name: SCALE_DOWN_COOLDOWN_SECONDS
@@ -65,7 +75,7 @@ spec:
             - name: AUDIT_LOG_PATH
               value: "/tmp/autoscaler/audit.jsonl"
             - name: LOG_DIR
-              value: "storage/logs/autoscaler"
+              value: "/tmp/autoscaler/logs"
             - name: AUDIT_DB_BACKEND
               value: "postgres"
             - name: AUDIT_DB_PATH
@@ -82,10 +92,18 @@ spec:
               value: "autoscaler"
             - name: AI_AGENT_ENABLED
               value: "true"
+            - name: AI_FALLBACK_ON_UNCERTAINTY
+              value: "true"
+            - name: AI_COVERAGE_THRESHOLD
+              value: "0.80"
+            - name: AI_MAX_CONFIDENCE
+              value: "1.00"
             - name: AI_MODEL
               value: "gpt-5.4"
             - name: AI_TIMEOUT_SECONDS
               value: "10"
+            - name: AI_ASYNC_ADVISORY
+              value: "true"
             - name: AI_INPUT_COST_PER_1M_TOKENS
               value: "0"
             - name: AI_OUTPUT_COST_PER_1M_TOKENS
@@ -99,24 +117,6 @@ spec:
                 secretKeyRef:
                   name: ai-api-secret
                   key: AI_API_KEY
-            - name: WEIGHT_LATENCY
-              value: "0.30"
-            - name: WEIGHT_ERROR
-              value: "0.25"
-            - name: WEIGHT_SATURATION
-              value: "0.15"
-            - name: WEIGHT_THROUGHPUT
-              value: "0.15"
-            - name: WEIGHT_COST
-              value: "0.10"
-            - name: WEIGHT_AGENT_DISAGREEMENT
-              value: "0.20"
-            - name: ACTION_EFFECT_UP
-              value: "0.80"
-            - name: ACTION_EFFECT_HOLD
-              value: "1.00"
-            - name: ACTION_EFFECT_DOWN
-              value: "1.20"
         - name: audit-db
           image: postgres:16-alpine
           imagePullPolicy: IfNotPresent
