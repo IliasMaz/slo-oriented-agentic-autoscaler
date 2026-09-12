@@ -1,5 +1,3 @@
-from collections import Counter
-
 from agents import run_agents
 from arbitration import arbitrate
 from audit import write_audit_line
@@ -87,18 +85,16 @@ def run_agents_node(state: AutoscalerState) -> dict:
         cycle_id=state.get("cycle_id"),
     )
     cycle_id = state.get("cycle_id")
-    votes_by_agent = {r.agent_name: r.action for r in recommendations}
-    vote_counts = dict(Counter(r.action for r in recommendations))
+    recommendations_by_agent = {r.agent_name: r.action for r in recommendations}
     log_event(
         agents_log,
         "agents_completed",
-        title="agents:aggregate_votes",
+        title="agents:recommendations_collected",
         cycle_id=cycle_id,
         recommendation_count=len(recommendations),
-        votes_by_agent=votes_by_agent,
-        vote_counts=vote_counts,
+        recommendations_by_agent=recommendations_by_agent,
     )
-    votes_summary = ", ".join(
+    recommendations_summary = ", ".join(
         f"{rec.agent_name}->{rec.action}({rec.desired_replicas})"
         for rec in recommendations
     )
@@ -107,8 +103,7 @@ def run_agents_node(state: AutoscalerState) -> dict:
         "agents",
         "Agent decisions collected",
         cycle_id=cycle_id,
-        vote_counts=vote_counts,
-        votes=votes_summary,
+        recommendations=recommendations_summary,
     )
     return {"agent_recommendations": recommendations}
 
@@ -116,10 +111,9 @@ def run_agents_node(state: AutoscalerState) -> dict:
 def arbitrate_node(state: AutoscalerState) -> dict:
     """
     Step 3.
-    Takes the recommendations from all agents and runs
-    optimization-based scoring for the three candidate actions:
-    scale_up, hold, scale_down.
-    Selects the one with the lowest weighted penalty score.
+    Takes recommendations from specialist agents and reviews them under hard
+    metric constraints. The AI can review ambiguous states; it is not
+    a vote aggregation layer.
     """
 
     aggregate = arbitrate(
@@ -131,22 +125,29 @@ def arbitrate_node(state: AutoscalerState) -> dict:
     log_event(
         arbitration_log,
         "arbitration_selected",
-        title=f"aggregation:final:{aggregate.action}",
+        title=f"arbitration:final:{aggregate.action}",
         cycle_id=cycle_id,
         action=aggregate.action,
         desired_replicas=aggregate.desired_replicas,
         reason=aggregate.reason,
+        deterministic_action=aggregate.deterministic_action,
+        allowed_actions=aggregate.allowed_actions,
+        decision_source=aggregate.decision_source,
+        decision_reason=aggregate.decision_reason,
     )
     log_human(
         timeline_log,
-        "aggregation",
-        "Weighted aggregation completed",
+        "arbitration",
+        "Evidence review completed",
         cycle_id=cycle_id,
         action=aggregate.action,
         desired_replicas=aggregate.desired_replicas,
         reason=aggregate.reason,
+        deterministic_action=aggregate.deterministic_action,
+        allowed_actions=aggregate.allowed_actions,
+        decision_source=aggregate.decision_source,
     )
-    return {"aggregated_decision": aggregate}
+    return {"arbitrated_decision": aggregate}
 
 
 def apply_safety_node(state: AutoscalerState) -> dict:
@@ -156,7 +157,7 @@ def apply_safety_node(state: AutoscalerState) -> dict:
     If any rule is triggered, the final decision becomes hold.
     """
     final_decision, veto_results = SAFETY_GATE.apply(
-        state["aggregated_decision"],
+        state["arbitrated_decision"],
         state["metrics_snapshot"],
     )
     cycle_id = state.get("cycle_id")
@@ -166,7 +167,7 @@ def apply_safety_node(state: AutoscalerState) -> dict:
         "safety_evaluated",
         title=f"safety:{final_decision.action}",
         cycle_id=cycle_id,
-        requested_action=state["aggregated_decision"].action,
+        requested_action=state["arbitrated_decision"].action,
         final_action=final_decision.action,
         veto_applied=final_decision.veto_applied,
         triggered_rules=triggered,
@@ -181,7 +182,7 @@ def apply_safety_node(state: AutoscalerState) -> dict:
         "safety",
         safety_message,
         cycle_id=cycle_id,
-        requested_action=state["aggregated_decision"].action,
+        requested_action=state["arbitrated_decision"].action,
         final_action=final_decision.action,
         triggered_rules=triggered,
     )
@@ -285,7 +286,7 @@ def audit_node(state: AutoscalerState) -> dict:
         "recommendations": [
             rec.model_dump() for rec in state["agent_recommendations"]
         ],
-        "aggregate": state["aggregated_decision"].model_dump(),
+        "arbitration": state["arbitrated_decision"].model_dump(),
         "veto_results": [
             rule.model_dump() for rule in state["veto_results"]
         ],

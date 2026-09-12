@@ -87,7 +87,7 @@ def build_graph():
     # Define nodes
     graph.add_node("fetch_metrics", fetch_metrics_node)
     graph.add_node("run_agents", run_agents_node)
-    graph.add_node("aggregate", arbitrate_node)
+    graph.add_node("arbitrate", arbitrate_node)
     graph.add_node("apply_safety", apply_safety_node)
     graph.add_node("scale", scale_node)
     graph.add_node("audit", audit_node)
@@ -96,8 +96,8 @@ def build_graph():
     # Always set entry/finish points for broad compatibility.
     graph.set_entry_point("fetch_metrics")
     graph.add_edge("fetch_metrics", "run_agents")
-    graph.add_edge("run_agents", "aggregate")
-    graph.add_edge("aggregate", "apply_safety")
+    graph.add_edge("run_agents", "arbitrate")
+    graph.add_edge("arbitrate", "apply_safety")
     graph.add_edge("apply_safety", "scale")
     graph.add_edge("scale", "audit")
     graph.set_finish_point("audit")

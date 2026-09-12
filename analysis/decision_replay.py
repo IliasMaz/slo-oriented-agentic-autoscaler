@@ -3,7 +3,7 @@
 Given a cycle identifier, this script reconstructs the full decision path:
 - metrics snapshot
 - per-agent votes
-- arbitration scores and selected action
+- allowed actions, decision source, and selected action
 - safety veto status
 - replica transition summary
 """
@@ -13,7 +13,6 @@ from __future__ import annotations
 import argparse
 import json
 import sqlite3
-from collections import Counter
 from pathlib import Path
 
 
@@ -122,7 +121,7 @@ def _format_report(event: dict, cycle_id: int) -> str:
     payload = event["payload"]
     snapshot = payload.get("snapshot", {})
     recommendations = payload.get("recommendations", [])
-    aggregate = payload.get("aggregate", {})
+    aggregate = payload.get("arbitration", payload.get("aggregate", {}))
     scores = aggregate.get("scores", [])
     final_decision = payload.get("final_decision", {})
     veto_results = payload.get("veto_results", [])
@@ -132,10 +131,7 @@ def _format_report(event: dict, cycle_id: int) -> str:
         for rec in recommendations
         if isinstance(rec, dict) and rec.get("agent_name") and rec.get("action")
     ]
-    vote_counts = Counter(rec.get("action") for rec in votes)
-
     score_rows = [row for row in scores if isinstance(row, dict)]
-    score_rows.sort(key=lambda row: _to_float(row.get("total_score")) or 10**9)
 
     triggered_rules = [
         rule.get("rule_name", "unknown_rule")
@@ -165,7 +161,7 @@ def _format_report(event: dict, cycle_id: int) -> str:
     )
     lines.append("")
 
-    lines.append("## Agent Votes")
+    lines.append("## Agent Recommendations")
     if not votes:
         lines.append("- no agent recommendations found")
     else:
@@ -176,25 +172,18 @@ def _format_report(event: dict, cycle_id: int) -> str:
                 f"{rec.get('action')} -> desired={rec.get('desired_replicas')} "
                 f"confidence={rec.get('confidence')}"
             )
-        lines.append(f"- vote_counts={dict(vote_counts)}")
+        lines.append(f"- recommendation_count={len(votes)}")
     lines.append("")
 
-    lines.append("## Aggregation")
-    if not score_rows:
-        lines.append("- no arbitration scores found")
-    else:
-        for idx, score in enumerate(score_rows, start=1):
-            marker = "*" if idx == 1 else " "
-            lines.append(
-                "- "
-                f"{marker} action={score.get('action')} "
-                f"desired={score.get('desired_replicas')} "
-                f"total_score={score.get('total_score')} "
-                f"cost={score.get('cost_penalty')} "
-                f"disagreement={score.get('disagreement_penalty')}"
-            )
-        lines.append(f"- selected_action={aggregate.get('action')}")
-        lines.append(f"- selected_reason={aggregate.get('reason')}")
+    lines.append("## Decision Review")
+    lines.append(f"- deterministic_action={aggregate.get('deterministic_action')}")
+    lines.append(f"- allowed_actions={aggregate.get('allowed_actions', aggregate.get('admissible_actions', []))}")
+    lines.append(f"- decision_source={aggregate.get('decision_source', 'legacy')}")
+    lines.append(f"- decision_reason={aggregate.get('decision_reason', aggregate.get('adjudication_basis', aggregate.get('reason')))}")
+    lines.append(f"- selected_action={aggregate.get('action')}")
+    lines.append(f"- selected_reason={aggregate.get('reason')}")
+    if score_rows:
+        lines.append("- candidate_trace=available for compatibility; not a weighted decision score")
     lines.append("")
 
     lines.append("## Safety")

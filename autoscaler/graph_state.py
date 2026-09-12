@@ -4,7 +4,7 @@ Every node reads from here what it needs and writes back only what it produced."
 from typing import TypedDict
 
 from models import (
-    AggregatedDecision,
+    ArbitratedDecision,
     AgentRecommendation,
     FinalDecision,
     MetricsSnapshot,
@@ -26,7 +26,7 @@ class AutoscalerState(TypedDict, total=False):
 
   # step 3 arbitrate between agents to get an aggregated decision
 
-    aggregated_decision: AggregatedDecision
+    arbitrated_decision: ArbitratedDecision
 
   # step 4 apply safety rules to get a final decision
     veto_results: list[VetoRuleResult]
