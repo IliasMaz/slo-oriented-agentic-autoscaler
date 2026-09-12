@@ -10,12 +10,15 @@ from config import (
     PER_REPLICA_RPS_THRESHOLD,
     SCALE_DOWN_RELEASE_MARGIN,
     SCALE_DOWN_STEP,
+    SCALE_UP_IMMEDIATE_BREACH_RATIO,
+    SCALE_UP_PERSISTENCE_CYCLES,
     SCALE_UP_STEP,
 )
 from models import ActionScore, AgentRecommendation, ArbitratedDecision, MetricsSnapshot
 
 
 arbitration_log = get_channel_logger("arbitration")
+_scale_up_pressure_streak = 0
 
 
 def clamp(value: int) -> int:
@@ -32,26 +35,50 @@ def desired_replicas_for_action(metrics: MetricsSnapshot, action: str) -> int:
     return metrics.current_replicas
 
 
-def select_deterministic_action(metrics: MetricsSnapshot) -> tuple[str, str]:
+def _scale_up_pressure(metrics: MetricsSnapshot) -> tuple[list[str], float]:
+    per_replica_rps = metrics.rps / max(metrics.current_replicas, 1)
+    ratios = {
+        "latency": metrics.p95_latency / LATENCY_P95_THRESHOLD,
+        "error_rate": metrics.error_rate / ERROR_RATE_THRESHOLD,
+        "inprogress": metrics.inprogress / INPROGRESS_THRESHOLD,
+        "per_replica_rps": per_replica_rps / PER_REPLICA_RPS_THRESHOLD,
+    }
+    reasons = [
+        f"{name} exceeds threshold"
+        for name, ratio in ratios.items()
+        if ratio > 1.0
+    ]
+    return reasons, max(ratios.values())
+
+
+def select_deterministic_action(
+    metrics: MetricsSnapshot,
+    cycle_id: int | None = None,
+) -> tuple[str, str]:
     """Select an action using explicit, auditable policy priorities.
 
     Safety-critical SLO pressure has priority over cost reduction. Scale-down is
     allowed only after every release condition is comfortably healthy.
     """
-    scale_up_reasons = []
-    per_replica_rps = metrics.rps / max(metrics.current_replicas, 1)
-
-    if metrics.p95_latency > LATENCY_P95_THRESHOLD:
-        scale_up_reasons.append("p95 latency exceeds threshold")
-    if metrics.error_rate > ERROR_RATE_THRESHOLD:
-        scale_up_reasons.append("error rate exceeds threshold")
-    if metrics.inprogress > INPROGRESS_THRESHOLD:
-        scale_up_reasons.append("in-progress requests exceed threshold")
-    if per_replica_rps > PER_REPLICA_RPS_THRESHOLD:
-        scale_up_reasons.append("per-replica throughput exceeds threshold")
+    global _scale_up_pressure_streak
+    scale_up_reasons, max_pressure_ratio = _scale_up_pressure(metrics)
 
     if scale_up_reasons:
+        if cycle_id is None:
+            _scale_up_pressure_streak = SCALE_UP_PERSISTENCE_CYCLES
+        else:
+            _scale_up_pressure_streak += 1
+        immediate = max_pressure_ratio >= SCALE_UP_IMMEDIATE_BREACH_RATIO
+        persistent = _scale_up_pressure_streak >= SCALE_UP_PERSISTENCE_CYCLES
+        if not immediate and not persistent:
+            return "hold", (
+                "scale-up pressure detected but awaiting persistent evidence "
+                f"({_scale_up_pressure_streak}/{SCALE_UP_PERSISTENCE_CYCLES} cycles)"
+            )
         return "scale_up", "; ".join(scale_up_reasons)
+
+    _scale_up_pressure_streak = 0
+    per_replica_rps = metrics.rps / max(metrics.current_replicas, 1)
 
     release = SCALE_DOWN_RELEASE_MARGIN
     can_scale_down = (
@@ -67,16 +94,15 @@ def select_deterministic_action(metrics: MetricsSnapshot) -> tuple[str, str]:
     return "hold", "no scale-up pressure and scale-down release conditions are not all satisfied"
 
 
-def get_allowed_actions(metrics: MetricsSnapshot) -> set[str]:
+def get_allowed_actions(metrics: MetricsSnapshot, cycle_id: int | None = None) -> set[str]:
     """Return actions allowed by the hard policy rules."""
     per_replica_rps = metrics.rps / max(metrics.current_replicas, 1)
-    hard_scale_up = (
-        metrics.p95_latency > LATENCY_P95_THRESHOLD
-        or metrics.error_rate > ERROR_RATE_THRESHOLD
-        or metrics.inprogress > INPROGRESS_THRESHOLD
-        or per_replica_rps > PER_REPLICA_RPS_THRESHOLD
-    )
-    if hard_scale_up:
+    pressure_reasons, max_pressure_ratio = _scale_up_pressure(metrics)
+    if pressure_reasons and (
+        cycle_id is None
+        or max_pressure_ratio >= SCALE_UP_IMMEDIATE_BREACH_RATIO
+        or _scale_up_pressure_streak >= SCALE_UP_PERSISTENCE_CYCLES
+    ):
         return {"scale_up"}
 
     release = SCALE_DOWN_RELEASE_MARGIN
@@ -119,8 +145,8 @@ def arbitrate(
     constraints, then lets the AI provide a holistic recommendation only when
     the state is ambiguous.
     """
-    deterministic_action, deterministic_reason = select_deterministic_action(metrics)
-    allowed = get_allowed_actions(metrics)
+    deterministic_action, deterministic_reason = select_deterministic_action(metrics, cycle_id)
+    allowed = get_allowed_actions(metrics, cycle_id)
     selected_action = deterministic_action
     reason = deterministic_reason
     ai_recommendation = next(
@@ -128,10 +154,16 @@ def arbitrate(
             recommendation for recommendation in recommendations
             if recommendation.agent_name == "ai_agent"
             and recommendation.vote_eligible
+            and (
+                recommendation.source_cycle_id is None
+                or cycle_id is None
+                or cycle_id - recommendation.source_cycle_id <= 1
+            )
         ),
         None,
     )
-    if len(allowed) > 1 and ai_recommendation is not None:
+    awaiting_persistence = deterministic_action == "hold" and "awaiting persistent evidence" in deterministic_reason
+    if len(allowed) > 1 and ai_recommendation is not None and not awaiting_persistence:
         if ai_recommendation.action in allowed:
             selected_action = ai_recommendation.action
             reason = (
@@ -157,7 +189,7 @@ def arbitrate(
         title="arbitration:decision_review_input",
         cycle_id=cycle_id,
         current_replicas=metrics.current_replicas,
-        votes_by_agent={rec.agent_name: rec.action for rec in recommendations},
+        recommendations_by_agent={rec.agent_name: rec.action for rec in recommendations},
         recommendation_confidences={rec.agent_name: rec.confidence for rec in recommendations},
         vote_eligible={rec.agent_name: rec.vote_eligible for rec in recommendations},
         deterministic_action=deterministic_action,

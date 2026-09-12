@@ -39,9 +39,12 @@ TARGET_NAMESPACE = get_env("TARGET_NAMESPACE", "thesis-autoscaling")
 TARGET_DEPLOYMENT = get_env("TARGET_DEPLOYMENT", "demo-app")
 
 MIN_REPLICAS = get_env_int("MIN_REPLICAS", 1)
-MAX_REPLICAS = get_env_int("MAX_REPLICAS", 10)
+MAX_REPLICAS = get_env_int("MAX_REPLICAS", 20)
 
-POLL_INTERVAL_SECONDS = get_env_float("POLL_INTERVAL_SECONDS", 15) # seconds
+POLL_INTERVAL_SECONDS = get_env_float("POLL_INTERVAL_SECONDS", 3.5) # seconds
+LOG_CYCLE_AGGREGATION = get_env_int("LOG_CYCLE_AGGREGATION", 5)
+LATENCY_ROLLING_WINDOW = get_env_int("LATENCY_ROLLING_WINDOW", 5)
+LATENCY_SCALE_DOWN_MARGIN = get_env_float("LATENCY_SCALE_DOWN_MARGIN", 0.85)
 
 # Thresholds for scaling decisions
 LATENCY_P95_THRESHOLD = get_env_float("LATENCY_P95_THRESHOLD", 0.4)  # seconds
@@ -54,6 +57,8 @@ PER_REPLICA_RPS_THRESHOLD = get_env_float(
 
 SCALE_UP_STEP = get_env_int("SCALE_UP_STEP", 1)
 SCALE_DOWN_STEP = get_env_int("SCALE_DOWN_STEP", 1)
+SCALE_UP_PERSISTENCE_CYCLES = get_env_int("SCALE_UP_PERSISTENCE_CYCLES", 2)
+SCALE_UP_IMMEDIATE_BREACH_RATIO = get_env_float("SCALE_UP_IMMEDIATE_BREACH_RATIO", 1.25)
 
 SCALE_UP_COOLDOWN_SECONDS = get_env_float("SCALE_UP_COOLDOWN_SECONDS", 30)  # seconds
 SCALE_DOWN_COOLDOWN_SECONDS = get_env_float("SCALE_DOWN_COOLDOWN_SECONDS", 60)  # seconds
@@ -75,28 +80,18 @@ AUDIT_DB_PASSWORD = get_env("AUDIT_DB_PASSWORD", "autoscaler")
 AI_API_KEY = get_env("AI_API_KEY", "")
 AI_MODEL = get_env("AI_MODEL", "gpt-5")
 AI_AGENT_ENABLED = get_env("AI_AGENT_ENABLED", "false").lower() == "true"
+AI_FALLBACK_ON_UNCERTAINTY = get_env("AI_FALLBACK_ON_UNCERTAINTY", "true").lower() == "true"
+AI_COVERAGE_THRESHOLD = get_env_float("AI_COVERAGE_THRESHOLD", 0.8)
+AI_MAX_CONFIDENCE = get_env_float("AI_MAX_CONFIDENCE", 1.0)
 AI_TIMEOUT_SECONDS = get_env_float("AI_TIMEOUT_SECONDS", 10.0)
+AI_ASYNC_ADVISORY = get_env("AI_ASYNC_ADVISORY", "true").lower() == "true"
 AI_INPUT_COST_PER_1M_TOKENS = get_env_float("AI_INPUT_COST_PER_1M_TOKENS", 0.0)
 AI_OUTPUT_COST_PER_1M_TOKENS = get_env_float("AI_OUTPUT_COST_PER_1M_TOKENS", 0.0)
 AI_MAX_TOTAL_COST_USD = get_env_float("AI_MAX_TOTAL_COST_USD", 0.0)
 AI_MAX_TOTAL_TOKENS = get_env_int("AI_MAX_TOTAL_TOKENS", 0)
 
-# Weighting factors for the scoring function
-WEIGHT_LATENCY = get_env_float("WEIGHT_LATENCY", 0.3) #This is the weight for the latency metric.
-WEIGHT_ERROR = get_env_float("WEIGHT_ERROR", 0.25) #This is the weight for the error rate metric.
-WEIGHT_SATURATION = get_env_float("WEIGHT_SATURATION", 0.15) # This is the weight for the saturation metric, which is based on in-progress requests.
-WEIGHT_THROUGHPUT = get_env_float("WEIGHT_THROUGHPUT", 0.15) # This is the weight for the throughput metric, which is based on requests per second per replica.
-WEIGHT_COST = get_env_float("WEIGHT_COST", 0.1) # This is the weight for the cost metric, which is based on the number of replicas.
-WEIGHT_AGENT_DISAGREEMENT = get_env_float("WEIGHT_AGENT_DISAGREEMENT", 0.2) # This is the weight for the agent disagreement metric, which is based on how much the agents disagree with each other.
-
-# Expected effects of actions on metrics
-
-ACTION_EFFECT_UP = get_env_float("ACTION_EFFECT_UP", 0.8) # This is the expected effect of a scale-up action on the metrics.
-ACTION_EFFECT_DOWN = get_env_float("ACTION_EFFECT_DOWN", 1.2) # This is the expected effect of a scale-down action on the metrics.
-ACTION_EFFECT_HOLD = get_env_float("ACTION_EFFECT_HOLD", 1.0) # This is the expected effect of a hold action on the metrics.
-
 # Channel logging configuration
-LOG_DIR = get_env("LOG_DIR", "storage/logs/autoscaler")
+LOG_DIR = get_env("LOG_DIR", "/tmp/autoscaler/logs")
 LOG_LEVEL = get_env("LOG_LEVEL", "INFO")
 LOG_MAX_BYTES = get_env_int("LOG_MAX_BYTES", 5_000_000)
 LOG_BACKUP_COUNT = get_env_int("LOG_BACKUP_COUNT", 5)

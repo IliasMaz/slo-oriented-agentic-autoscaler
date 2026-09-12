@@ -20,6 +20,7 @@ class AgentRecommendation(BaseModel):
     confidence: float
     reason: str
     vote_eligible: bool = True
+    source_cycle_id: int | None = None
 
 class ActionScore(BaseModel):
     """A score for a potential action."""

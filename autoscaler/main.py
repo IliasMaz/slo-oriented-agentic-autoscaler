@@ -12,7 +12,7 @@
 import threading
 import time
 import traceback
-from collections import Counter as VoteCounter
+from collections import Counter
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Response
@@ -25,11 +25,13 @@ from prometheus_client import (
 
 from channel_logging import (
     get_channel_logger,
+    log_batch,
     log_event,
     log_exception,
     log_human,
+    log_transition,
 )
-from config import POLL_INTERVAL_SECONDS
+from config import LOG_CYCLE_AGGREGATION, POLL_INTERVAL_SECONDS
 from kubernetes_api import load_cluster_config
 from runner import GraphRunner
 
@@ -106,6 +108,7 @@ def control_loop():
     )
 
     cycle_id = 0
+    cycle_batch: list[dict] = []
 
     while True:
         cycle_id += 1
@@ -129,12 +132,21 @@ def control_loop():
             current_replicas = result["current_replicas"]
             desired_replicas = final_decision.desired_replicas
             delta = desired_replicas - current_replicas
-            vote_counts = dict(
-                VoteCounter(r.action for r in result["agent_recommendations"])
-            )
-            votes_by_agent = {
+            recommendations_by_agent = {
                 r.agent_name: r.action for r in result["agent_recommendations"]
             }
+            cycle_batch.append(
+                {
+                    "action": final_decision.action,
+                    "scaled": bool(result.get("scaled", False)),
+                    "veto": bool(final_decision.veto_applied),
+                    "rps": snapshot.rps,
+                    "p95": snapshot.p95_latency,
+                    "error_rate": snapshot.error_rate,
+                    "inprogress": snapshot.inprogress,
+                    "ai": "ai_agent" in recommendations_by_agent,
+                }
+            )
 
             AUTOSCALER_OBSERVED_RPS.set(snapshot.rps)
             AUTOSCALER_OBSERVED_P95_LATENCY.set(snapshot.p95_latency)
@@ -161,27 +173,51 @@ def control_loop():
                 replica_delta=delta,
                 scaled=result.get("scaled", False),
                 veto_applied=final_decision.veto_applied,
-                vote_counts=vote_counts,
-                votes_by_agent=votes_by_agent,
+                recommendations_by_agent=recommendations_by_agent,
                 rps=snapshot.rps,
                 p95_latency=snapshot.p95_latency,
                 error_rate=snapshot.error_rate,
                 inprogress=snapshot.inprogress,
             )
-            log_human(
-                timeline_log,
-                "cycle",
-                "Cycle completed",
-                cycle_id=cycle_id,
-                final_action=final_decision.action,
-                desired_replicas=final_decision.desired_replicas,
-                current_replicas=current_replicas,
-                delta=delta,
-                scaled=result.get("scaled", False),
-                veto_applied=final_decision.veto_applied,
-            )
+            if result.get("scaled", False):
+                log_transition(
+                    timeline_log,
+                    cycle_id,
+                    "Replica patch applied",
+                    from_replicas=current_replicas,
+                    to_replicas=desired_replicas,
+                    delta=delta,
+                )
+            if cycle_id % max(LOG_CYCLE_AGGREGATION, 1) == 0:
+                action_counts = Counter(item["action"] for item in cycle_batch)
+                log_batch(
+                    timeline_log,
+                    cycle_id - len(cycle_batch) + 1,
+                    cycle_id,
+                    action_counts=dict(action_counts),
+                    scaled_events=sum(item["scaled"] for item in cycle_batch),
+                    vetoed_events=sum(item["veto"] for item in cycle_batch),
+                    ai_review_cycles=sum(item["ai"] for item in cycle_batch),
+                    max_rps=round(max(item["rps"] for item in cycle_batch), 3),
+                    max_p95_latency=round(max(item["p95"] for item in cycle_batch), 3),
+                    max_error_rate=round(max(item["error_rate"] for item in cycle_batch), 5),
+                    max_inprogress=max(item["inprogress"] for item in cycle_batch),
+                )
+                cycle_batch.clear()
 
         except Exception as exc:
+            cycle_batch.append(
+                {
+                    "action": "error",
+                    "scaled": False,
+                    "veto": False,
+                    "rps": 0.0,
+                    "p95": 0.0,
+                    "error_rate": 0.0,
+                    "inprogress": 0,
+                    "ai": False,
+                }
+            )
             tb_text = traceback.format_exc()
             log_event(
                 errors_log,

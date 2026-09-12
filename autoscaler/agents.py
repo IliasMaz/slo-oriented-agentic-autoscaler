@@ -1,4 +1,5 @@
 from collections import deque
+from concurrent.futures import Future, ThreadPoolExecutor
 
 from config import (
   ERROR_RATE_THRESHOLD,
@@ -8,7 +9,8 @@ from config import (
   MIN_REPLICAS,
     AI_AGENT_ENABLED,
     AI_FALLBACK_ON_UNCERTAINTY,
-    AI_UNCERTAINTY_MARGIN,
+    AI_COVERAGE_THRESHOLD,
+    AI_ASYNC_ADVISORY,
     LATENCY_ROLLING_WINDOW,
     LATENCY_SCALE_DOWN_MARGIN,
   PER_REPLICA_RPS_THRESHOLD,
@@ -19,10 +21,18 @@ from config import (
 from channel_logging import get_channel_logger, log_event
 from models import MetricsSnapshot, AgentRecommendation
 from ai_agent import ai_decision_agent
+from arbitration import get_allowed_actions
 
 
 agents_log = get_channel_logger("agents")
 _LATENCY_HISTORY: deque[float] = deque(maxlen=max(1, LATENCY_ROLLING_WINDOW))
+_COVERAGE_HISTORY: dict[str, deque[float]] = {
+    name: deque(maxlen=max(1, LATENCY_ROLLING_WINDOW))
+    for name in ("latency", "error_rate", "inprogress", "per_replica_rps")
+}
+_AI_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix="ai-advisory")
+_AI_PENDING: Future | None = None
+_AI_PENDING_CYCLE: int | None = None
 
 def clamp(value: int) -> int:
     """Clamp the value between MIN_REPLICAS and MAX_REPLICAS."""
@@ -153,13 +163,16 @@ def needs_ai_coverage(
     recommendations: list[AgentRecommendation],
 ) -> tuple[bool, str]:
     """Identify deterministic cases where an AI opinion adds coverage."""
-    confidence_by_action: dict[str, float] = {}
-    for recommendation in recommendations:
-        confidence_by_action[recommendation.action] = (
-            confidence_by_action.get(recommendation.action, 0.0)
-            + recommendation.confidence
-        )
-
+    hard_pressure = (
+        metrics.p95_latency > LATENCY_P95_THRESHOLD
+        or metrics.error_rate > ERROR_RATE_THRESHOLD
+        or metrics.inprogress > INPROGRESS_THRESHOLD
+        or metrics.rps / max(metrics.current_replicas, 1) > PER_REPLICA_RPS_THRESHOLD
+    )
+    if hard_pressure:
+        return True, "serious SLO or capacity pressure requires AI coverage"
+    if len(get_allowed_actions(metrics)) == 1:
+        return False, "hard policy permits only one action; AI cannot change the decision"
     non_hold_actions = {
         recommendation.action
         for recommendation in recommendations
@@ -167,26 +180,78 @@ def needs_ai_coverage(
     }
     if len(non_hold_actions) > 1:
         return True, "deterministic agents disagree on scale direction"
+    current_ratios = {
+        "latency": LATENCY_P95_THRESHOLD and metrics.p95_latency / LATENCY_P95_THRESHOLD,
+        "error_rate": ERROR_RATE_THRESHOLD and metrics.error_rate / ERROR_RATE_THRESHOLD,
+        "inprogress": INPROGRESS_THRESHOLD and metrics.inprogress / INPROGRESS_THRESHOLD,
+        "per_replica_rps": PER_REPLICA_RPS_THRESHOLD and (
+            metrics.rps / max(metrics.current_replicas, 1) / PER_REPLICA_RPS_THRESHOLD
+        ),
+    }
+    for name, ratio in current_ratios.items():
+        if ratio is not False:
+            _COVERAGE_HISTORY[name].append(float(ratio))
+    if not all(len(history) >= LATENCY_ROLLING_WINDOW for history in _COVERAGE_HISTORY.values()):
+        return False, (
+            "deterministic evidence is sufficiently clear; rolling coverage "
+            f"window needs {LATENCY_ROLLING_WINDOW} samples"
+        )
+    rolling_ratios = {
+        name: sum(history) / len(history)
+        for name, history in _COVERAGE_HISTORY.items()
+    }
+    approaching = [
+        name for name, ratio in rolling_ratios.items()
+        if ratio is not False and AI_COVERAGE_THRESHOLD <= ratio < 1.0
+    ]
+    if len(approaching) >= 2:
+        return True, (
+            f"two or more rolling signal averages reached {AI_COVERAGE_THRESHOLD:.0%} "
+            "of their scale-up thresholds: "
+            + ", ".join(
+                f"{name}={rolling_ratios[name]:.2f}" for name in approaching
+            )
+        )
 
-    ranked = sorted(confidence_by_action.values(), reverse=True)
-    if len(ranked) > 1 and ranked[0] - ranked[1] <= AI_UNCERTAINTY_MARGIN:
-        return True, "deterministic confidence gap is small"
-
-    near_latency_boundary = (
-        abs(metrics.p95_latency - LATENCY_P95_THRESHOLD)
-        <= LATENCY_P95_THRESHOLD * AI_UNCERTAINTY_MARGIN
+    return False, (
+        "deterministic evidence is sufficiently clear; fewer than two rolling "
+        "signal averages are near their scale-up thresholds"
     )
-    near_error_boundary = (
-        abs(metrics.error_rate - ERROR_RATE_THRESHOLD)
-        <= ERROR_RATE_THRESHOLD * AI_UNCERTAINTY_MARGIN
-    )
-    if near_latency_boundary or near_error_boundary:
-        return True, "observed metric is near an SLO decision boundary"
 
-    return False, "deterministic recommendation is sufficiently clear"
+
+def _drain_pending_ai(recommendations: list[AgentRecommendation], cycle_id: int | None) -> None:
+    global _AI_PENDING, _AI_PENDING_CYCLE
+    if _AI_PENDING is None or not _AI_PENDING.done():
+        return
+    try:
+        ready = _AI_PENDING.result()
+        ready.source_cycle_id = _AI_PENDING_CYCLE
+        recommendations.append(ready)
+        log_event(
+            agents_log,
+            "ai_recommendation_ready",
+            title="ai_agent:advisory_ready",
+            cycle_id=cycle_id,
+            source_cycle_id=_AI_PENDING_CYCLE,
+            action=ready.action,
+            confidence=ready.confidence,
+            reason=ready.reason,
+        )
+    except Exception as exc:
+        log_event(
+            agents_log,
+            "ai_advisory_error",
+            title="ai_agent:advisory_error",
+            cycle_id=cycle_id,
+            source_cycle_id=_AI_PENDING_CYCLE,
+            error=str(exc),
+        )
+    _AI_PENDING = None
+    _AI_PENDING_CYCLE = None
 
 def run_agents(metrics: MetricsSnapshot, cycle_id: int | None = None) -> list[AgentRecommendation]:
     """Run all agents and return their recommendations."""
+    global _AI_PENDING, _AI_PENDING_CYCLE
     recommendations = [
         latency_agent(metrics),
         throughput_agent(metrics),
@@ -207,26 +272,48 @@ def run_agents(metrics: MetricsSnapshot, cycle_id: int | None = None) -> list[Ag
             reason=rec.reason,
         )
 
+    if AI_ASYNC_ADVISORY and cycle_id is not None:
+        _drain_pending_ai(recommendations, cycle_id)
+
     should_request_ai, coverage_reason = needs_ai_coverage(metrics, recommendations)
-    if AI_AGENT_ENABLED and (not AI_FALLBACK_ON_UNCERTAINTY or should_request_ai):
-        ai_recommendation = ai_decision_agent(metrics)
-        recommendations.append(ai_recommendation)
-        log_event(
-            agents_log,
-            "agent_recommendation",
-            title=f"{ai_recommendation.agent_name}:{ai_recommendation.action}",
-            cycle_id=cycle_id,
-            agent_name=ai_recommendation.agent_name,
-            action=ai_recommendation.action,
-            desired_replicas=ai_recommendation.desired_replicas,
-            confidence=ai_recommendation.confidence,
-            reason=ai_recommendation.reason,
-        )
+    allowed_actions = get_allowed_actions(metrics)
+    request_ai = (
+        should_request_ai
+        or (not AI_FALLBACK_ON_UNCERTAINTY and len(allowed_actions) > 1)
+    )
+    if AI_AGENT_ENABLED and request_ai:
+        if AI_ASYNC_ADVISORY and cycle_id is not None:
+            if _AI_PENDING is None:
+                _AI_PENDING_CYCLE = cycle_id
+                _AI_PENDING = _AI_EXECUTOR.submit(ai_decision_agent, metrics)
+                log_event(
+                    agents_log,
+                    "ai_advisory_started",
+                    title="ai_agent:advisory_started",
+                    cycle_id=cycle_id,
+                    source_cycle_id=cycle_id,
+                )
+        else:
+            ai_recommendation = ai_decision_agent(metrics)
+            ai_recommendation.source_cycle_id = cycle_id
+            recommendations.append(ai_recommendation)
+            log_event(
+                agents_log,
+                "agent_recommendation",
+                title=f"{ai_recommendation.agent_name}:{ai_recommendation.action}",
+                cycle_id=cycle_id,
+                agent_name=ai_recommendation.agent_name,
+                action=ai_recommendation.action,
+                desired_replicas=ai_recommendation.desired_replicas,
+                confidence=ai_recommendation.confidence,
+                vote_eligible=ai_recommendation.vote_eligible,
+                reason=ai_recommendation.reason,
+            )
     elif AI_AGENT_ENABLED:
         log_event(
             agents_log,
             "ai_coverage_skipped",
-            title="ai_agent:deterministic_path",
+            title="ai_agent:hard_constraint" if len(allowed_actions) == 1 else "ai_agent:coverage_skipped",
             cycle_id=cycle_id,
             reason=coverage_reason,
         )
