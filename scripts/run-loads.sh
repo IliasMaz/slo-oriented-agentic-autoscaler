@@ -3,7 +3,6 @@
 set -uo pipefail
 
 AGGREGATE_LOG_FILE=""
-APP_PORT_FORWARD_PID=""
 
 capture_replica_samples() {
   local output_path="$1"
@@ -22,34 +21,15 @@ capture_replica_samples() {
   done
 }
 
-cleanup_app_port_forward() {
-  if [ -n "$APP_PORT_FORWARD_PID" ]; then
-    kill "$APP_PORT_FORWARD_PID" 2>/dev/null || true
-  fi
-}
-trap cleanup_app_port_forward EXIT INT TERM
-
 ensure_app_reachable() {
-  if curl -fsS --max-time 2 http://localhost:8000/health >/dev/null 2>&1; then
-    return 0
+  local headers
+  if headers="$(curl -fsS -D - -o /dev/null --max-time 2 http://localhost:8000/health 2>/dev/null)"; then
+    case "$headers" in
+      *"X-Load-Route: clusterip"*) return 0 ;;
+      *) echo "ERROR: localhost:8000 is not the load proxy. Run ./scripts/port-forward-all.sh and stop any direct demo-app port-forward." >&2; return 1 ;;
+    esac
   fi
-
-  kubectl port-forward svc/demo-app 8000:8000 -n thesis-autoscaling \
-    > "${TMPDIR:-/tmp}/demo-app-port-forward.log" 2>&1 &
-  APP_PORT_FORWARD_PID=$!
-
-  for _ in $(seq 1 30); do
-    if curl -fsS --max-time 2 http://localhost:8000/health >/dev/null 2>&1; then
-      return 0
-    fi
-    if ! kill -0 "$APP_PORT_FORWARD_PID" 2>/dev/null; then
-      echo "ERROR: demo app port-forward failed; see ${TMPDIR:-/tmp}/demo-app-port-forward.log" >&2
-      return 1
-    fi
-    sleep 1
-  done
-
-  echo "ERROR: demo app is not reachable at http://localhost:8000" >&2
+  echo "ERROR: localhost:8000 is not reachable through the load proxy. Run ./scripts/port-forward-all.sh first." >&2
   return 1
 }
 
@@ -100,7 +80,7 @@ Options:
 Examples:
   ./scripts/run-loads.sh --interactive
   ./scripts/run-loads.sh steady
-  ./scripts/run-loads.sh spike sawtooth
+  ./scripts/run-loads.sh latency_slo queueing_slo sawtooth
   ./scripts/run-loads.sh --parallel spike sawtooth
   ./scripts/run-loads.sh --all
 EOF
@@ -248,7 +228,7 @@ get_control_log_offset() {
     return 0
   fi
 
-  kubectl exec -n thesis-autoscaling "$pod" -c agent-autoscaler -- sh -c 'wc -c < /service/storage/logs/autoscaler/control.log' 2>/dev/null | tr -d '[:space:]'
+  kubectl exec -n thesis-autoscaling "$pod" -c agent-autoscaler -- sh -c 'wc -c < /tmp/autoscaler/logs/control.log' 2>/dev/null | tr -d '[:space:]'
 }
 
 capture_control_log_window() {
@@ -263,7 +243,7 @@ capture_control_log_window() {
     return 0
   fi
 
-  end_offset="$(kubectl exec -n thesis-autoscaling "$pod" -c agent-autoscaler -- sh -c 'wc -c < /service/storage/logs/autoscaler/control.log' 2>/dev/null | tr -d '[:space:]')"
+  end_offset="$(kubectl exec -n thesis-autoscaling "$pod" -c agent-autoscaler -- sh -c 'wc -c < /tmp/autoscaler/logs/control.log' 2>/dev/null | tr -d '[:space:]')"
 
   if [ -z "$start_offset" ] || [ -z "$end_offset" ]; then
     echo "[aggregate] control.log offsets unavailable" >> "$output_file"
@@ -275,7 +255,7 @@ capture_control_log_window() {
     return 0
   fi
 
-  kubectl exec -n thesis-autoscaling "$pod" -c agent-autoscaler -- sh -c "tail -c +$((start_offset + 1)) /service/storage/logs/autoscaler/control.log" 2>/dev/null >> "$output_file" || {
+  kubectl exec -n thesis-autoscaling "$pod" -c agent-autoscaler -- sh -c "tail -c +$((start_offset + 1)) /tmp/autoscaler/logs/control.log" 2>/dev/null >> "$output_file" || {
     echo "[aggregate] failed to read control.log window" >> "$output_file"
     return 0
   }
@@ -304,7 +284,7 @@ append_story_from_window() {
         sed -E 's/^([0-9-]+ [0-9:,]+) INFO autoscaler\.timeline \[([^]]+)\] cycle=([^ ]+) (.*)$/[story] ts=\1 cycle=\3 stage=\2 message=\4/'
     } >> "$output_file"
   else
-    control_events="$(grep -E 'lifecycle:cycle_start|metrics:snapshot|agents:aggregate_votes|aggregation:final|safety:|replicas:|lifecycle:cycle_end|errors:cycle:|exception:control_loop' "$window_file" || true)"
+    control_events="$(grep -E 'lifecycle:cycle_start|metrics:snapshot|agents:recommendations_collected|arbitration:final|aggregation:final|safety:|replicas:|lifecycle:cycle_end|errors:cycle:|exception:control_loop' "$window_file" || true)"
     {
       if [ -n "$control_events" ]; then
         echo "[story] source=control_events"
@@ -414,14 +394,6 @@ run_post_run_insights() {
   local report_status
 
   mkdir -p "$insights_dir"
-  if [ ! -s "$audit_payloads_path" ]; then
-    {
-      echo "[analysis] status=NO_AUDIT_EVENTS"
-      echo "[analysis] audit_payloads=${audit_payloads_path}"
-    } >> "$AGGREGATE_LOG_FILE"
-    return 0
-  fi
-
   if python3 analysis/run_insights.py \
     --jsonl "$audit_payloads_path" \
     --output-dir "$insights_dir" \
@@ -429,6 +401,7 @@ run_post_run_insights() {
     report_status="OK"
   else
     report_status="ERROR"
+    overall_exit=1
   fi
 
   {
@@ -580,7 +553,7 @@ profile_slug="$(IFS=_; echo "${requested_profiles[*]}")"
 run_dir="${output_base}/run_${profile_slug}_${timestamp}"
 json_dir="${run_dir}"
 log_dir="${run_dir}"
-autoscaler_timeline_log="storage/logs/autoscaler/timeline.log"
+autoscaler_timeline_log="/tmp/autoscaler/logs/timeline.log"
 mkdir -p "$json_dir" "$log_dir"
 AGGREGATE_LOG_FILE="${run_dir}/aggregate.log"
 RUN_TIMELINE_LOG="${run_dir}/timeline.log"
@@ -603,7 +576,7 @@ echo "Run directory: $run_dir"
 stage_log "initialized" "run_dir=${run_dir} parallel=${parallel_mode} dry_run=${dry_run} profiles=${requested_profiles[*]}"
 append_system_health_status "$AGGREGATE_LOG_FILE"
 if [ "$dry_run" -eq 0 ]; then
-  ensure_app_reachable
+  ensure_app_reachable || exit 1
 fi
 audit_start_count="$(get_audit_event_count)"
 echo "[aggregate] audit_start_count=${audit_start_count}" >> "$AGGREGATE_LOG_FILE"
@@ -620,6 +593,10 @@ run_one() {
   local replica_samples_path="${run_dir}/${profile}_replica_samples.jsonl"
 
   start_replicas="$(detect_start_replicas)"
+  if [ -n "${EXPECTED_START_REPLICAS:-}" ] && [ "$start_replicas" != "$EXPECTED_START_REPLICAS" ]; then
+    echo "ERROR: expected ${EXPECTED_START_REPLICAS} initial replicas, found ${start_replicas}; refusing unmatched comparison." >&2
+    return 1
+  fi
   started_at_utc="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   control_log_start_offset="$(get_control_log_offset)"
 

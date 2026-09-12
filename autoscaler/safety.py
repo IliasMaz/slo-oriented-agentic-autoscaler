@@ -23,7 +23,7 @@ from config import (
     SCALE_UP_STEP,
 )
 from models import (
-    AggregatedDecision,
+    ArbitratedDecision,
     FinalDecision,
     MetricsSnapshot,
     VetoRuleResult,
@@ -83,7 +83,7 @@ class SafetyGate:
             ),
         )
 
-    def _rule_high_latency_blocks_scale_down(self, metrics: MetricsSnapshot, decision: AggregatedDecision) -> VetoRuleResult:
+    def _rule_high_latency_blocks_scale_down(self, metrics: MetricsSnapshot, decision: ArbitratedDecision) -> VetoRuleResult:
         """Check if high latency should block scale down."""
         triggered = (
             decision.action == "scale_down"
@@ -102,7 +102,7 @@ class SafetyGate:
             ),
         )
 
-    def _rule_high_error_rate_blocks_scale_down(self, metrics: MetricsSnapshot, decision: AggregatedDecision) -> VetoRuleResult:
+    def _rule_high_error_rate_blocks_scale_down(self, metrics: MetricsSnapshot, decision: ArbitratedDecision) -> VetoRuleResult:
         """Check if high error rate should block scale down."""
         triggered = (
             decision.action == "scale_down"
@@ -121,7 +121,7 @@ class SafetyGate:
             ),
         )
 
-    def _rule_scale_up_cooldown(self, decision: AggregatedDecision) -> VetoRuleResult:
+    def _rule_scale_up_cooldown(self, decision: ArbitratedDecision) -> VetoRuleResult:
         """Check if scale up is within cooldown period."""
         triggered = (
             decision.action == "scale_up"
@@ -140,7 +140,7 @@ class SafetyGate:
             ),
         )
 
-    def _rule_scale_down_cooldown(self, decision: AggregatedDecision) -> VetoRuleResult:
+    def _rule_scale_down_cooldown(self, decision: ArbitratedDecision) -> VetoRuleResult:
         """Check if scale down is within cooldown period."""
         triggered = (
             decision.action == "scale_down"
@@ -159,7 +159,7 @@ class SafetyGate:
             ),
         )
 
-    def _rule_min_scale_action_interval(self, decision: AggregatedDecision) -> VetoRuleResult:
+    def _rule_min_scale_action_interval(self, decision: ArbitratedDecision) -> VetoRuleResult:
         triggered = (
             self._is_scale_action(decision.action)
             and (time.time() - self.last_scale_action_at) < self.policy.min_scale_action_interval_seconds
@@ -176,7 +176,7 @@ class SafetyGate:
             ),
         )
 
-    def _rule_scale_direction_change_cooldown(self, decision: AggregatedDecision) -> VetoRuleResult:
+    def _rule_scale_direction_change_cooldown(self, decision: ArbitratedDecision) -> VetoRuleResult:
         opposite_direction = (
             self._is_scale_action(decision.action)
             and self._is_scale_action(self.last_scale_action)
@@ -198,7 +198,7 @@ class SafetyGate:
             ),
         )
 
-    def _rule_scale_down_hysteresis(self, metrics: MetricsSnapshot, decision: AggregatedDecision) -> VetoRuleResult:
+    def _rule_scale_down_hysteresis(self, metrics: MetricsSnapshot, decision: ArbitratedDecision) -> VetoRuleResult:
         per_replica_rps = metrics.rps / max(metrics.current_replicas, 1)
         release = self.policy.scale_down_release_margin
         safe_to_scale_down = (
@@ -223,7 +223,7 @@ class SafetyGate:
     def _rule_excessive_scale_up_step(
         self,
         metrics: MetricsSnapshot,
-        decision: AggregatedDecision,
+        decision: ArbitratedDecision,
     ) -> VetoRuleResult:
         """Check if scale up step exceeds maximum allowed."""
         triggered = False
@@ -246,7 +246,7 @@ class SafetyGate:
             ),
         )
 
-    def evaluate(self,decision: AggregatedDecision, metrics: MetricsSnapshot) -> list[VetoRuleResult]:
+    def evaluate(self,decision: ArbitratedDecision, metrics: MetricsSnapshot) -> list[VetoRuleResult]:
         """Evaluate all safety rules and return a list of veto results."""
         results = [
             self._invalid_metrics(metrics),
@@ -272,7 +272,7 @@ class SafetyGate:
 
     def apply(
         self,
-        decision: AggregatedDecision,
+        decision: ArbitratedDecision,
         metrics: MetricsSnapshot,
     ) -> tuple[FinalDecision, list[VetoRuleResult]]:
         results = self.evaluate(decision, metrics)

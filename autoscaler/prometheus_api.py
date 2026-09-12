@@ -22,9 +22,15 @@ def build_snapshot(current_replicas: int)->MetricsSnapshot:
     """Build a metrics snapshot from Prometheus queries."""
     timestamp_epoch = time.time()
     rps_query = query_scalar('sum(rate(demo_app_requests_total[1m]))')
-    error_rate_query = query_scalar('sum(rate(demo_app_requests_total{status=~"5.."}[1m])) / sum(rate(demo_app_requests_total[1m]))')
-    p95_latency_query = query_scalar('histogram_quantile(0.95, sum(rate(demo_app_request_duration_seconds_bucket[1m])) by (le))')
-    inprogress_query = int(query_scalar('sum(demo_app_requests_in_progress)'))
+    error_rate_query = query_scalar(
+        'sum(rate(demo_app_requests_total{status_code=~"5.."}[1m])) '
+        '/ clamp_min(sum(rate(demo_app_requests_total[1m])), 1)'
+    )
+    p95_latency_query = query_scalar(
+        'histogram_quantile(0.95, '
+        'sum(rate(demo_app_request_latency_seconds_bucket[1m])) by (le))'
+    )
+    inprogress_query = int(query_scalar('sum(demo_app_inprogress_requests)'))
 
     return MetricsSnapshot(
         timestamp_epoch=timestamp_epoch,

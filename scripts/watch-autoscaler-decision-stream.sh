@@ -8,24 +8,8 @@ if [ -z "$POD" ]; then
   exit 1
 fi
 
-printf 'Watching autoscaler decision stream from pod: %s\n' "$POD"
+printf 'Watching aggregated autoscaler decision stream from pod: %s\n' "$POD"
 printf 'Press Ctrl+C to stop.\n\n'
 
-kubectl exec -n thesis-autoscaling "$POD" -c agent-autoscaler -- sh -c '
-  while true; do
-    echo "=== $(date -u +%Y-%m-%dT%H:%M:%SZ) ==="
-    echo "--- decision stream ---"
-
-    for f in /service/storage/logs/autoscaler/agents.log /service/storage/logs/autoscaler/arbitration.log /service/storage/logs/autoscaler/safety.log /service/storage/logs/autoscaler/scaling.log; do
-      if [ -f "$f" ]; then
-        echo "### $(basename "$f")"
-        tail -n 5 "$f" 2>/dev/null || true
-      else
-        echo "### $(basename "$f") missing"
-      fi
-      echo
-    done
-
-    sleep 5
-  done
-'
+kubectl exec -n thesis-autoscaling "$POD" -c agent-autoscaler -- sh -c \
+  'tail -n 80 -f /tmp/autoscaler/logs/timeline.log'
