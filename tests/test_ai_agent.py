@@ -33,7 +33,7 @@ class AIAssuranceTest(unittest.TestCase):
 
     def test_ai_confidence_is_capped_for_advisory_role(self):
         recommendation = parse_response(
-            '{"action":"scale_up","desired_replicas":4,"confidence":0.99,"reason":"coverage"}',
+            '{"action":"scale_up","desired_replicas":4,"confidence":1.5,"reason":"coverage"}',
             current_replicas=2,
         )
 

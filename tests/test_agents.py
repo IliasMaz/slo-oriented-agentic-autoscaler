@@ -1,5 +1,6 @@
 import sys
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -7,7 +8,7 @@ AUTOSCALER_DIR = ROOT / "autoscaler"
 if str(AUTOSCALER_DIR) not in sys.path:
     sys.path.insert(0, str(AUTOSCALER_DIR))
 
-from agents import latency_agent, needs_ai_coverage
+from agents import _AI_EXECUTOR, _COVERAGE_HISTORY, latency_agent, needs_ai_coverage, run_agents
 from models import AgentRecommendation, MetricsSnapshot
 
 
@@ -23,6 +24,96 @@ def snapshot() -> MetricsSnapshot:
 
 
 class DeterministicFirstCoverageTest(unittest.TestCase):
+    def setUp(self):
+        for history in _COVERAGE_HISTORY.values():
+            history.clear()
+
+    def test_hard_constraint_skips_optional_ai_call(self):
+        with patch("agents.get_allowed_actions", return_value={"scale_up"}), \
+             patch("agents.AI_AGENT_ENABLED", True), \
+             patch("agents.AI_FALLBACK_ON_UNCERTAINTY", True), \
+             patch("agents.AI_ASYNC_ADVISORY", False), \
+             patch("agents.ai_decision_agent") as ai_call:
+            needed, reason = needs_ai_coverage(snapshot(), [])
+            self.assertFalse(needed)
+            self.assertIn("only one action", reason)
+            recommendations = run_agents(snapshot())
+            ai_call.assert_not_called()
+            self.assertEqual(len(recommendations), 4)
+
+    def test_serious_pressure_calls_ai_even_when_action_is_hard_constrained(self):
+        metrics = snapshot()
+        metrics.p95_latency = 0.6
+        ai_recommendation = AgentRecommendation(
+            agent_name="ai_agent",
+            action="scale_up",
+            desired_replicas=4,
+            confidence=1.0,
+            reason="serious pressure review",
+        )
+        with patch("agents.get_allowed_actions", return_value={"scale_up"}), \
+             patch("agents.AI_AGENT_ENABLED", True), \
+             patch("agents.AI_FALLBACK_ON_UNCERTAINTY", True), \
+             patch("agents.AI_ASYNC_ADVISORY", False), \
+             patch("agents.ai_decision_agent", return_value=ai_recommendation) as ai_call:
+            recommendations = run_agents(metrics, cycle_id=1)
+
+        ai_call.assert_called_once_with(metrics)
+        self.assertEqual(recommendations[-1].agent_name, "ai_agent")
+
+    def test_async_ai_result_is_consumed_on_next_cycle(self):
+        metrics = snapshot()
+        metrics.p95_latency = 0.6
+        ai_recommendation = AgentRecommendation(
+            agent_name="ai_agent",
+            action="scale_up",
+            desired_replicas=3,
+            confidence=1.0,
+            reason="async advisory",
+        )
+
+        class CompletedFuture:
+            def done(self):
+                return True
+
+            def result(self):
+                return ai_recommendation
+
+        with patch("agents.get_allowed_actions", return_value={"scale_up"}), \
+             patch("agents.AI_AGENT_ENABLED", True), \
+             patch("agents.AI_FALLBACK_ON_UNCERTAINTY", True), \
+             patch("agents.AI_ASYNC_ADVISORY", True), \
+             patch.object(_AI_EXECUTOR, "submit", return_value=CompletedFuture()):
+            run_agents(metrics, cycle_id=1)
+            recommendations = run_agents(metrics, cycle_id=2)
+
+        self.assertEqual(recommendations[-1].source_cycle_id, 1)
+
+    def test_two_signals_near_threshold_request_ai_coverage(self):
+        metrics = snapshot()
+        metrics.p95_latency = 0.34
+        metrics.inprogress = 7
+
+        results = [needs_ai_coverage(metrics, []) for _ in range(5)]
+        needed, reason = results[-1]
+
+        self.assertTrue(needed)
+        self.assertIn("80%", reason)
+
+    def test_single_near_threshold_sample_does_not_trigger_coverage(self):
+        normal = snapshot()
+        near = snapshot()
+        near.p95_latency = 0.34
+        near.inprogress = 7
+
+        for _ in range(4):
+            needed, _ = needs_ai_coverage(normal, [])
+            self.assertFalse(needed)
+        needed, reason = needs_ai_coverage(near, [])
+
+        self.assertFalse(needed)
+        self.assertIn("fewer than two rolling", reason)
+
     def test_clear_deterministic_path_does_not_need_ai(self):
         recommendations = [
             AgentRecommendation(

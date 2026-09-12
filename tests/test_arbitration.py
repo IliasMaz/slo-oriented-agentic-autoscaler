@@ -7,12 +7,47 @@ AUTOSCALER_DIR = ROOT / "autoscaler"
 if str(AUTOSCALER_DIR) not in sys.path:
     sys.path.insert(0, str(AUTOSCALER_DIR))
 
+import arbitration
 from arbitration import arbitrate
 from config import MAX_REPLICAS, MIN_REPLICAS, SCALE_UP_STEP
 from models import AgentRecommendation, MetricsSnapshot
 
 
 class ArbitrationScaleUpTest(unittest.TestCase):
+    def setUp(self):
+        arbitration._scale_up_pressure_streak = 0
+
+    def test_transient_pressure_holds_before_scaling(self):
+        metrics = MetricsSnapshot(
+            timestamp_epoch=0.0,
+            rps=20.0,
+            error_rate=0.0,
+            p95_latency=0.45,
+            inprogress=0,
+            current_replicas=2,
+        )
+
+        first = arbitrate(metrics, [], cycle_id=100)
+        second = arbitrate(metrics, [], cycle_id=101)
+
+        self.assertEqual(first.action, "hold")
+        self.assertIn("persistent evidence", first.reason)
+        self.assertEqual(second.action, "scale_up")
+
+    def test_immediate_breach_scales_without_waiting(self):
+        metrics = MetricsSnapshot(
+            timestamp_epoch=0.0,
+            rps=20.0,
+            error_rate=0.0,
+            p95_latency=0.60,
+            inprogress=0,
+            current_replicas=2,
+        )
+
+        decision = arbitrate(metrics, [], cycle_id=100)
+
+        self.assertEqual(decision.action, "scale_up")
+
     def test_scale_up_is_selected_when_throughput_is_strongly_high(self):
         metrics = MetricsSnapshot(
             timestamp_epoch=0.0,
@@ -84,7 +119,7 @@ class ArbitrationScaleUpTest(unittest.TestCase):
             AgentRecommendation(agent_name="throughput_agent", action="scale_up", desired_replicas=3, confidence=0.9, reason="rising load"),
             AgentRecommendation(agent_name="error_agent", action="hold", desired_replicas=2, confidence=0.4, reason="healthy"),
             AgentRecommendation(agent_name="saturation_agent", action="scale_up", desired_replicas=3, confidence=0.35, reason="rising queue"),
-            AgentRecommendation(agent_name="ai_agent", action="scale_up", desired_replicas=99, confidence=0.5, reason="combined pressure"),
+            AgentRecommendation(agent_name="ai_agent", action="scale_up", desired_replicas=99, confidence=1.0, reason="combined pressure"),
         ]
 
         decision = arbitrate(metrics, recommendations)
@@ -107,7 +142,7 @@ class ArbitrationScaleUpTest(unittest.TestCase):
             AgentRecommendation(agent_name="throughput_agent", action="hold", desired_replicas=2, confidence=1.0, reason="normal"),
             AgentRecommendation(agent_name="error_agent", action="hold", desired_replicas=2, confidence=0.4, reason="healthy"),
             AgentRecommendation(agent_name="saturation_agent", action="hold", desired_replicas=2, confidence=0.35, reason="healthy"),
-            AgentRecommendation(agent_name="ai_agent", action="hold", desired_replicas=2, confidence=0.5, reason="wait"),
+            AgentRecommendation(agent_name="ai_agent", action="hold", desired_replicas=2, confidence=1.0, reason="wait"),
         ]
 
         decision = arbitrate(metrics, recommendations)
