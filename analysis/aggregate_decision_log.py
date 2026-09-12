@@ -92,20 +92,26 @@ def _render_cycle(cycle: str, events: list[dict], color: bool = False) -> str:
     by_stage = {event["stage"]: event for event in events}
     metrics = by_stage.get("metrics", {}).get("fields", {})
     agents = by_stage.get("agents", {}).get("fields", {})
+    arbitration = by_stage.get("arbitration", {}).get("fields", {})
     aggregation = by_stage.get("aggregation", {}).get("fields", {})
+    decision = arbitration or aggregation
     safety = by_stage.get("safety", {}).get("fields", {})
     kubernetes = by_stage.get("kubernetes", {}).get("fields", {})
     completed = by_stage.get("cycle", {}).get("fields", {})
 
-    requested = _field(safety, "requested_action", _field(aggregation, "action"))
+    requested = _field(safety, "requested_action", _field(decision, "action"))
     final = _field(safety, "final_action", _field(completed, "final_action"))
+    deterministic = _field(decision, "deterministic_action", "-")
+    allowed = _field(decision, "allowed_actions", _field(decision, "admissible_actions", "-"))
+    source = _field(decision, "decision_source", "-")
+    basis = _field(decision, "decision_reason", _field(decision, "adjudication_basis", _field(decision, "reason", "-")))
     veto_applied = _field(safety, "veto_applied", _field(kubernetes, "veto_applied", _field(completed, "veto_applied", False)))
     status = _field(kubernetes, "status", "-")
     if status == "-":
         status = "applied" if _field(completed, "scaled", False) else "skipped"
     vetoes = _field(safety, "triggered_rules", [])
     veto_text = ",".join(str(veto) for veto in vetoes) if vetoes else "none"
-    votes = _field(agents, "votes", "-")
+    recommendations = _field(agents, "recommendations", _field(agents, "votes", "-"))
 
     colors = {
         "reset": "\033[0m", "bold": "\033[1m", "blue": "\033[34m",
@@ -123,9 +129,10 @@ def _render_cycle(cycle: str, events: list[dict], color: bool = False) -> str:
     lines = [
         paint(f"[cycle {cycle}]", "bold"),
         paint(f"  metrics     replicas={_field(metrics, 'current_replicas')} rps={_field(metrics, 'rps')} p95={_field(metrics, 'p95_latency')} error={_field(metrics, 'error_rate')} inprogress={_field(metrics, 'inprogress')}", "blue"),
-        paint(f"  agents      {votes}", "magenta"),
-        paint(f"  arbitration requested={requested} desired={_field(aggregation, 'desired_replicas')}", "yellow"),
-        paint(f"  reason      {_field(aggregation, 'reason')}", "dim"),
+        paint(f"  agents      {recommendations}", "magenta"),
+        paint(f"  arbitration requested={requested} source={source} deterministic={deterministic} desired={_field(decision, 'desired_replicas')}", "yellow"),
+        paint(f"  allowed    actions={allowed}", "cyan"),
+        paint(f"  reason      {basis}", "dim"),
         paint(f"  safety      {'VETO' if veto_applied else 'OK'} final={final} rules={veto_text}", safety_color),
         paint(f"  kubernetes  {'APPLIED' if status == 'applied' else 'SKIPPED'} status={status} from={_field(kubernetes, 'from_replicas', _field(completed, 'current_replicas'))} to={_field(kubernetes, 'to_replicas', _field(completed, 'desired_replicas'))} delta={_field(kubernetes, 'delta', _field(completed, 'delta'))}", result_color),
         paint(f"  result      INFO action={final} replicas={_field(completed, 'desired_replicas')} scaled={_field(completed, 'scaled', False)}", result_color),

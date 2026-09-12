@@ -8,7 +8,7 @@ import logging
 import os
 from logging.handlers import RotatingFileHandler
 
-from config import LOG_BACKUP_COUNT, LOG_DIR, LOG_LEVEL, LOG_MAX_BYTES
+from config import LOG_BACKUP_COUNT, LOG_CYCLE_AGGREGATION, LOG_DIR, LOG_LEVEL, LOG_MAX_BYTES
 
 
 _CHANNEL_CACHE: dict[str, logging.Logger] = {}
@@ -64,7 +64,8 @@ def get_channel_logger(channel: str) -> logging.Logger:
         )
         handler.setFormatter(formatter)
         logger.addHandler(handler)
-        logger.addHandler(_get_control_handler())
+        if channel == "timeline":
+            logger.addHandler(_get_control_handler())
 
     _CHANNEL_CACHE[channel] = logger
     return logger
@@ -107,12 +108,51 @@ def log_human(
     **fields,
 ) -> None:
     """Log a human-readable line that is easy to scan during a live run."""
-    cycle_tag = f"cycle={cycle_id}" if cycle_id is not None else "cycle=-"
+    if (
+        logger.name == "autoscaler.timeline"
+        and cycle_id is not None
+        and cycle_id % max(LOG_CYCLE_AGGREGATION, 1) != 0
+        and stage != "error"
+    ):
+        return
+    cycle_tag = f"cycle={cycle_id}" if cycle_id is not None else ""
     suffix = _format_key_values(**fields)
-    logger.info(f"[{stage}] - {cycle_tag} | {message}{suffix}")
+    prefix = f"{cycle_tag} | " if cycle_tag else ""
+    logger.info(f"[{stage}] | {prefix}{message}{suffix}")
     if stage == "cycle" and message == "Cycle completed":
         logger.info("--------------------------------------------------------------------------------")
         logger.info("")
+
+
+def log_batch(logger: logging.Logger, cycle_start: int, cycle_end: int, **fields) -> None:
+    """Render a compact, multiline summary for a completed cycle batch."""
+    logger.info("")
+    logger.info("[BATCH] cycles %s-%s", cycle_start, cycle_end)
+    labels = (
+        ("actions", "action_counts"),
+        ("scaled events", "scaled_events"),
+        ("safety vetoes", "vetoed_events"),
+        ("AI reviews", "ai_review_cycles"),
+        ("peak RPS", "max_rps"),
+        ("peak p95", "max_p95_latency"),
+        ("peak errors", "max_error_rate"),
+        ("peak in-progress", "max_inprogress"),
+    )
+    for label, key in labels:
+        if key in fields:
+            logger.info(
+                "  %-16s %s",
+                f"{label}:",
+                json.dumps(fields[key], ensure_ascii=True, default=str),
+            )
+    logger.info("  %-16s completed", "status:")
+    logger.info("[BATCH] end")
+
+
+def log_transition(logger: logging.Logger, cycle_id: int, message: str, **fields) -> None:
+    """Render an immediate, readable scaling transition."""
+    logger.info("")
+    logger.info("[EVENT] cycle=%s | %s%s", cycle_id, message, _format_key_values(**fields))
 
 
 def log_exception(
