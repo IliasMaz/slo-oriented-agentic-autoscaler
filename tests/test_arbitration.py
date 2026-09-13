@@ -9,13 +9,32 @@ if str(AUTOSCALER_DIR) not in sys.path:
 
 import arbitration
 from arbitration import arbitrate
-from config import MAX_REPLICAS, MIN_REPLICAS, SCALE_UP_STEP
+from config import MAX_REPLICAS, MIN_REPLICAS
 from models import AgentRecommendation, MetricsSnapshot
 
 
 class ArbitrationScaleUpTest(unittest.TestCase):
     def setUp(self):
         arbitration._scale_up_pressure_streak = 0
+        arbitration._last_scale_up_snapshot = None
+        arbitration._ineffective_scale_up_cycles = 0
+
+    def test_ineffective_scale_up_stops_latency_only_escalation(self):
+        baseline = MetricsSnapshot(
+            timestamp_epoch=0.0,
+            rps=5.0,
+            error_rate=0.0,
+            p95_latency=0.8,
+            inprogress=1,
+            current_replicas=4,
+        )
+        arbitration.observe_scale_result(baseline, "scale_up", True)
+        arbitration.observe_scale_result(baseline, "hold", False)
+        arbitration.observe_scale_result(baseline, "hold", False)
+
+        decision = arbitration.arbitrate(baseline, [], cycle_id=100)
+
+        self.assertEqual(decision.action, "hold")
 
     def test_transient_pressure_holds_before_scaling(self):
         metrics = MetricsSnapshot(
@@ -47,6 +66,26 @@ class ArbitrationScaleUpTest(unittest.TestCase):
         decision = arbitrate(metrics, [], cycle_id=100)
 
         self.assertEqual(decision.action, "scale_up")
+
+    def test_rising_near_threshold_signals_trigger_predictive_scale_up(self):
+        metrics = MetricsSnapshot(
+            timestamp_epoch=0.0,
+            rps=27.0,
+            error_rate=0.0,
+            p95_latency=0.35,
+            inprogress=0,
+            current_replicas=2,
+            per_replica_rps=13.5,
+            rps_trend=2.0,
+            p95_trend=0.04,
+        )
+
+        first = arbitration.arbitrate(metrics, [], cycle_id=100)
+        decision = arbitration.arbitrate(metrics, [], cycle_id=101)
+
+        self.assertEqual(first.action, "hold")
+        self.assertEqual(decision.action, "scale_up")
+        self.assertIn("rising p95", decision.reason)
 
     def test_scale_up_is_selected_when_throughput_is_strongly_high(self):
         metrics = MetricsSnapshot(
@@ -101,7 +140,7 @@ class ArbitrationScaleUpTest(unittest.TestCase):
         self.assertEqual(decision.action, "scale_up")
         expected_replicas = max(
             MIN_REPLICAS,
-            min(MAX_REPLICAS, metrics.current_replicas + SCALE_UP_STEP),
+            min(MAX_REPLICAS, metrics.current_replicas + 3),
         )
         self.assertEqual(decision.desired_replicas, expected_replicas)
 
@@ -125,7 +164,7 @@ class ArbitrationScaleUpTest(unittest.TestCase):
         decision = arbitrate(metrics, recommendations)
 
         self.assertEqual(decision.action, "scale_up")
-        self.assertEqual(decision.desired_replicas, 2 + SCALE_UP_STEP)
+        self.assertEqual(decision.desired_replicas, 3)
         self.assertIn("AI reviewed", decision.reason)
 
     def test_ai_review_cannot_break_hard_slo_constraint(self):

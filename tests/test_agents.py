@@ -39,7 +39,7 @@ class DeterministicFirstCoverageTest(unittest.TestCase):
             self.assertIn("only one action", reason)
             recommendations = run_agents(snapshot())
             ai_call.assert_not_called()
-            self.assertEqual(len(recommendations), 4)
+            self.assertEqual(len(recommendations), 5)
 
     def test_serious_pressure_calls_ai_even_when_action_is_hard_constrained(self):
         metrics = snapshot()

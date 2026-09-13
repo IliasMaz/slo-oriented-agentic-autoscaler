@@ -68,6 +68,20 @@ class AnalysisTest(unittest.TestCase):
         (hpa / "load.jsonl").unlink()
         self.assertFalse(compare(agentic, hpa)["validity"]["comparable"])
 
+    def test_fixed_rate_dropped_iterations_require_review(self):
+        agentic = self.make_run("agentic")
+        hpa = self.make_run("hpa")
+        for run, dropped in ((agentic, 0), (hpa, 3)):
+            summary = json.loads((run / "load_summary.json").read_text())
+            summary["metrics"]["dropped_iterations"] = {"count": dropped}
+            (run / "load_summary.json").write_text(json.dumps(summary))
+            (run / "fixed_rate_load_summary.json").write_text(json.dumps(summary))
+
+        result = compare(agentic, hpa)
+
+        self.assertFalse(result["validity"]["comparable"])
+        self.assertIn("fixed arrival rate was not fully sustained", result["validity"]["reason"])
+
     def test_replica_integral_does_not_include_gaps_between_profiles(self):
         run = self.make_run("hpa")
         extra = [
