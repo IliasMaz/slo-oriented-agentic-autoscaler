@@ -24,7 +24,7 @@ class ArbitrationScaleUpTest(unittest.TestCase):
             timestamp_epoch=0.0,
             rps=5.0,
             error_rate=0.0,
-            p95_latency=0.8,
+            p95_latency=0.35,
             inprogress=1,
             current_replicas=4,
         )
@@ -35,6 +35,69 @@ class ArbitrationScaleUpTest(unittest.TestCase):
         decision = arbitration.arbitrate(baseline, [], cycle_id=100)
 
         self.assertEqual(decision.action, "hold")
+
+    def test_soft_ceiling_requires_strong_pressure(self):
+        metrics = MetricsSnapshot(
+            timestamp_epoch=0.0,
+            rps=180.0,
+            error_rate=0.0,
+            p95_latency=0.45,
+            inprogress=9,
+            current_replicas=12,
+        )
+
+        decision = arbitration.arbitrate(metrics, [], cycle_id=100)
+
+        self.assertEqual(decision.action, "hold")
+
+    def test_soft_ceiling_allows_deep_queue_pressure(self):
+        metrics = MetricsSnapshot(
+            timestamp_epoch=0.0,
+            rps=180.0,
+            error_rate=0.0,
+            p95_latency=0.45,
+            inprogress=20,
+            queue_depth=9,
+            current_replicas=12,
+        )
+
+        decision = arbitration.arbitrate(metrics, [], cycle_id=100)
+
+        self.assertEqual(decision.action, "scale_up")
+
+    def test_empty_queue_allows_release_when_wait_window_is_stale(self):
+        metrics = MetricsSnapshot(
+            timestamp_epoch=0.0,
+            rps=20.0,
+            error_rate=0.0,
+            p95_latency=0.10,
+            inprogress=0,
+            queue_depth=0,
+            queue_wait_p95=0.40,
+            queue_timeout_rate=0.0,
+            current_replicas=12,
+        )
+
+        decision = arbitration.arbitrate(metrics, [], cycle_id=100)
+
+        self.assertEqual(decision.action, "scale_down")
+
+    def test_active_queue_still_blocks_release(self):
+        metrics = MetricsSnapshot(
+            timestamp_epoch=0.0,
+            rps=20.0,
+            error_rate=0.0,
+            p95_latency=0.10,
+            inprogress=0,
+            queue_depth=5,
+            queue_wait_p95=0.40,
+            queue_timeout_rate=0.0,
+            current_replicas=12,
+        )
+
+        decision = arbitration.arbitrate(metrics, [], cycle_id=100)
+
+        self.assertEqual(decision.action, "scale_up")
 
     def test_transient_pressure_holds_before_scaling(self):
         metrics = MetricsSnapshot(
@@ -137,11 +200,8 @@ class ArbitrationScaleUpTest(unittest.TestCase):
 
         decision = arbitrate(metrics, recommendations, cycle_id=42)
 
-        self.assertEqual(decision.action, "scale_up")
-        expected_replicas = max(
-            MIN_REPLICAS,
-            min(MAX_REPLICAS, metrics.current_replicas + 3),
-        )
+        self.assertEqual(decision.action, "hold")
+        expected_replicas = metrics.current_replicas
         self.assertEqual(decision.desired_replicas, expected_replicas)
 
     def test_ai_reviews_an_ambiguous_allowed_state(self):

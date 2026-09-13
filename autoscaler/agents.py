@@ -25,6 +25,7 @@ from channel_logging import get_channel_logger, log_event
 from models import MetricsSnapshot, AgentRecommendation
 from ai_agent import ai_decision_agent
 from arbitration import get_allowed_actions
+from policy import assess_pressure, capacity_pressure, per_replica_rps
 
 
 agents_log = get_channel_logger("agents")
@@ -123,13 +124,7 @@ def throughput_agent(metrics: MetricsSnapshot) -> AgentRecommendation:
 def error_agent(metrics: MetricsSnapshot) -> AgentRecommendation:
     """Agent that makes decisions based on error rate."""
     if metrics.error_rate > ERROR_RATE_THRESHOLD:
-        capacity_signal = (
-            metrics.p95_latency > LATENCY_P95_THRESHOLD
-            or metrics.inprogress > INPROGRESS_THRESHOLD
-            or metrics.queue_depth > QUEUE_DEPTH_THRESHOLD
-            or metrics.queue_wait_p95 > QUEUE_WAIT_P95_THRESHOLD
-            or metrics.queue_timeout_rate > QUEUE_TIMEOUT_RATE_THRESHOLD
-        )
+        capacity_signal = capacity_pressure(metrics)
         if not capacity_signal:
             return AgentRecommendation(
                 agent_name="error_agent",
@@ -208,20 +203,38 @@ def queue_agent(metrics: MetricsSnapshot) -> AgentRecommendation:
     )
 
 
+def capacity_agent(metrics: MetricsSnapshot) -> AgentRecommendation:
+    """Classify whether high throughput is causing observable capacity pressure."""
+    current_rps = per_replica_rps(metrics)
+    if current_rps > PER_REPLICA_RPS_THRESHOLD and capacity_pressure(metrics):
+        return AgentRecommendation(
+            agent_name="capacity_agent",
+            action="scale_up",
+            desired_replicas=clamp(metrics.current_replicas + SCALE_UP_STEP),
+            confidence=0.95,
+            reason=(
+                f"per-replica RPS {current_rps:.2f} is high and correlates "
+                "with observable latency or queue pressure"
+            ),
+        )
+    return AgentRecommendation(
+        agent_name="capacity_agent",
+        action="hold",
+        desired_replicas=metrics.current_replicas,
+        confidence=0.9,
+        reason=(
+            f"per-replica RPS {current_rps:.2f} has no correlated "
+            "latency or queue pressure"
+        ),
+    )
+
+
 def needs_ai_coverage(
     metrics: MetricsSnapshot,
     recommendations: list[AgentRecommendation],
 ) -> tuple[bool, str]:
     """Identify deterministic cases where an AI opinion adds coverage."""
-    hard_pressure = (
-        metrics.p95_latency > LATENCY_P95_THRESHOLD
-        or metrics.error_rate > ERROR_RATE_THRESHOLD
-        or metrics.inprogress > INPROGRESS_THRESHOLD
-        or metrics.rps / max(metrics.current_replicas, 1) > PER_REPLICA_RPS_THRESHOLD
-        or metrics.queue_depth > QUEUE_DEPTH_THRESHOLD
-        or metrics.queue_wait_p95 > QUEUE_WAIT_P95_THRESHOLD
-        or metrics.queue_timeout_rate > QUEUE_TIMEOUT_RATE_THRESHOLD
-    )
+    hard_pressure = metrics.error_rate > ERROR_RATE_THRESHOLD or capacity_pressure(metrics)
     if hard_pressure:
         return True, "serious SLO or capacity pressure requires AI coverage"
     if len(get_allowed_actions(metrics)) == 1:
@@ -311,6 +324,7 @@ def run_agents(metrics: MetricsSnapshot, cycle_id: int | None = None) -> list[Ag
         error_agent(metrics),
         saturation_agent(metrics),
         queue_agent(metrics),
+        capacity_agent(metrics),
     ]
 
     for rec in recommendations:

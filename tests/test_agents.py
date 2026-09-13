@@ -8,7 +8,7 @@ AUTOSCALER_DIR = ROOT / "autoscaler"
 if str(AUTOSCALER_DIR) not in sys.path:
     sys.path.insert(0, str(AUTOSCALER_DIR))
 
-from agents import _AI_EXECUTOR, _COVERAGE_HISTORY, latency_agent, needs_ai_coverage, run_agents
+from agents import _AI_EXECUTOR, _COVERAGE_HISTORY, capacity_agent, latency_agent, needs_ai_coverage, run_agents
 from models import AgentRecommendation, MetricsSnapshot
 
 
@@ -39,7 +39,17 @@ class DeterministicFirstCoverageTest(unittest.TestCase):
             self.assertIn("only one action", reason)
             recommendations = run_agents(snapshot())
             ai_call.assert_not_called()
-            self.assertEqual(len(recommendations), 5)
+            self.assertEqual(len(recommendations), 6)
+
+    def test_capacity_agent_rejects_rps_only_pressure(self):
+        metrics = snapshot()
+        metrics.rps = 40.0
+        metrics.current_replicas = 2
+
+        recommendation = capacity_agent(metrics)
+
+        self.assertEqual(recommendation.action, "hold")
+        self.assertIn("no correlated", recommendation.reason)
 
     def test_serious_pressure_calls_ai_even_when_action_is_hard_constrained(self):
         metrics = snapshot()
