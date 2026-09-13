@@ -38,6 +38,8 @@ spec:
               value: "2"
             - name: MAX_REPLICAS
               value: "20"
+            - name: SOFT_REPLICA_CEILING
+              value: "12"
             - name: POLL_INTERVAL_SECONDS
               value: "3.5"
             - name: LOG_CYCLE_AGGREGATION
@@ -55,11 +57,11 @@ spec:
             - name: PER_REPLICA_RPS_THRESHOLD
               value: "15"
             - name: SCALE_UP_STEP
-              value: "1"
+              value: "3"
             - name: SCALE_DOWN_STEP
               value: "1"
             - name: SCALE_UP_PERSISTENCE_CYCLES
-              value: "2"
+              value: "1"
             - name: SCALE_UP_IMMEDIATE_BREACH_RATIO
               value: "1.25"
             - name: SCALE_UP_COOLDOWN_SECONDS

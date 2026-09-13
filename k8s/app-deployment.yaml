@@ -75,3 +75,9 @@ spec:
               value: "0.03"
             - name: CPU_BURN_ITERS
               value: "0"
+            - name: QUEUE_MODE
+              value: "true"
+            - name: MAX_CONCURRENT_REQUESTS
+              value: "8"
+            - name: QUEUE_TIMEOUT_MS
+              value: "1000"
