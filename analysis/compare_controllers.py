@@ -9,6 +9,8 @@ import os
 from datetime import datetime
 from pathlib import Path
 
+SOFT_REPLICA_CEILING = 12
+
 
 def _load(path: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
@@ -39,11 +41,16 @@ def _replica_metrics(run_dir: Path, profile: str | None = None) -> dict:
             return {}
         duration = sum(values["sampled_seconds"] for values in profiles)
         replica_seconds = sum(values["replica_seconds"] for values in profiles)
+        above_ceiling_seconds = sum(
+            values["above_soft_ceiling_seconds"] for values in profiles
+        )
         return {
             "avg_replicas": round(replica_seconds / duration, 4) if duration else None,
             "max_replicas": max(values["max_replicas"] for values in profiles),
             "scaling_events": sum(values["scaling_events"] for values in profiles),
             "replica_seconds": replica_seconds,
+            "above_soft_ceiling_seconds": round(above_ceiling_seconds, 2),
+            "above_soft_ceiling_ratio": round(above_ceiling_seconds / duration, 4) if duration else None,
         }
     samples: list[dict] = []
     paths = (
@@ -71,6 +78,11 @@ def _replica_metrics(run_dir: Path, profile: str | None = None) -> dict:
         * max(0.0, float(current["timestamp_epoch"]) - float(previous["timestamp_epoch"]))
         for previous, current in zip(samples, samples[1:])
     )
+    above_ceiling_seconds = sum(
+        max(0.0, float(current["timestamp_epoch"]) - float(previous["timestamp_epoch"]))
+        for previous, current in zip(samples, samples[1:])
+        if float(previous.get("current_replicas", 0)) > SOFT_REPLICA_CEILING
+    )
     duration = float(samples[-1]["timestamp_epoch"]) - float(samples[0]["timestamp_epoch"])
     return {
         "avg_replicas": round(replica_seconds / duration, 4) if duration else None,
@@ -80,6 +92,8 @@ def _replica_metrics(run_dir: Path, profile: str | None = None) -> dict:
             replicas[index] != replicas[index - 1] for index in range(1, len(replicas))
         ),
         "replica_seconds": round(replica_seconds, 2),
+        "above_soft_ceiling_seconds": round(above_ceiling_seconds, 2),
+        "above_soft_ceiling_ratio": round(above_ceiling_seconds / duration, 4) if duration else None,
     }
 
 
@@ -237,6 +251,8 @@ def compare(agentic_dir: Path, hpa_dir: Path) -> dict:
         "slo_violation_ratio": "SLO violations",
         "scaling_events": "Observed ready-replica changes",
         "replica_seconds": "Replica time (replica-seconds)",
+        "above_soft_ceiling_seconds": "Time above soft replica ceiling (seconds)",
+        "above_soft_ceiling_ratio": "Time above soft replica ceiling (ratio)",
         "vetoed_events": "Safety blocks",
         "transition_rate": "Action changes",
         "max_vus": "Max VUs",

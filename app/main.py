@@ -107,7 +107,7 @@ def cpu_burn(iters: int) -> None:
 # FastAPI endpoints
 
 @app.get("/health")
-def health():
+async def health():
     """Health check endpoint."""
     return {"status": "ok"}
 

@@ -8,10 +8,15 @@ capture_replica_samples() {
   local output_path="$1"
   prom_scalar() {
     local query="$1"
-    curl -fsS --get --max-time 3 \
+    local value
+    value="$(curl -fsS --get --max-time 3 \
       --data-urlencode "query=${query}" \
       http://localhost:9090/api/v1/query 2>/dev/null \
-      | jq -r '.data.result[0].value[1] // "0"' 2>/dev/null || echo "0"
+      | jq -r '.data.result[0].value[1] // "0"' 2>/dev/null || echo "0")"
+    case "$value" in
+      ''|null|NaN|Inf|-Inf) echo "0" ;;
+      *) printf '%s\n' "$value" ;;
+    esac
   }
   while true; do
     local snapshot
@@ -21,12 +26,15 @@ capture_replica_samples() {
       local desired current
       desired="${snapshot%,*}"
       current="${snapshot#*,}"
-      local timestamp rps p95 error_rate inprogress
+      local timestamp rps p95 error_rate inprogress queue_depth queue_wait_p95 queue_timeout_rate
       timestamp="$(date +%s)"
       rps="$(prom_scalar 'sum(rate(demo_app_requests_total[1m]))')"
       p95="$(prom_scalar 'histogram_quantile(0.95, sum(rate(demo_app_request_latency_seconds_bucket[1m])) by (le))')"
       error_rate="$(prom_scalar 'sum(rate(demo_app_requests_total{status_code=~"5.."}[1m])) / clamp_min(sum(rate(demo_app_requests_total[1m])), 1)')"
       inprogress="$(prom_scalar 'sum(demo_app_inprogress_requests)')"
+      queue_depth="$(prom_scalar 'sum(demo_app_queue_depth)')"
+      queue_wait_p95="$(prom_scalar 'histogram_quantile(0.95, sum(rate(demo_app_queue_wait_seconds_bucket[1m])) by (le))')"
+      queue_timeout_rate="$(prom_scalar 'sum(rate(demo_app_queue_timeout_total[1m])) / clamp_min(sum(rate(demo_app_requests_total[1m])), 1)')"
       jq -cn \
         --argjson timestamp "${timestamp:-0}" \
         --argjson desired "${desired:-0}" \
@@ -35,7 +43,10 @@ capture_replica_samples() {
         --argjson p95 "${p95:-0}" \
         --argjson error_rate "${error_rate:-0}" \
         --argjson inprogress "${inprogress:-0}" \
-        '{timestamp_epoch:$timestamp,desired_replicas:$desired,current_replicas:$current,rps:$rps,p95_latency:$p95,error_rate:$error_rate,inprogress:$inprogress}' \
+        --argjson queue_depth "${queue_depth:-0}" \
+        --argjson queue_wait_p95 "${queue_wait_p95:-0}" \
+        --argjson queue_timeout_rate "${queue_timeout_rate:-0}" \
+        '{timestamp_epoch:$timestamp,desired_replicas:$desired,current_replicas:$current,rps:$rps,p95_latency:$p95,error_rate:$error_rate,inprogress:$inprogress,queue_depth:$queue_depth,queue_wait_p95:$queue_wait_p95,queue_timeout_rate:$queue_timeout_rate}' \
         >> "$output_path"
     fi
     sleep 5
@@ -234,6 +245,21 @@ append_system_health_status() {
       echo "[system] recent_autoscaler_errors_end"
     fi
   } >> "$output_log"
+}
+
+append_pod_lifecycle_status() {
+  local output_log="$1"
+  local ts
+  ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  local pod_status
+  pod_status="$(kubectl get pods -n thesis-autoscaling -l app=demo-app -o json 2>/dev/null \
+    | python3 -c 'import json,sys; data=json.load(sys.stdin); pods=data.get("items", []); restarts=sum(status.get("restartCount", 0) for pod in pods for status in pod.get("status", {}).get("containerStatuses", [])); ready=sum(status.get("ready", False) for pod in pods for status in pod.get("status", {}).get("containerStatuses", [])); print(f"pods={len(pods)} ready={ready} restarts={restarts}")' \
+    2>/dev/null || echo "pods=unknown ready=unknown restarts=unknown")"
+  echo "[lifecycle] ts=${ts} ${pod_status}" >> "$output_log"
+  kubectl get events -n thesis-autoscaling --sort-by=.lastTimestamp 2>/dev/null \
+    | grep -E 'demo-app|Unhealthy|Killing|BackOff' \
+    | tail -n 10 \
+    | sed "s/^/[lifecycle-event] ts=${ts} /" >> "$output_log" || true
 }
 
 get_autoscaler_pod() {
@@ -633,6 +659,7 @@ run_one() {
     echo
   } > "$log_path"
   append_system_health_status "$AGGREGATE_LOG_FILE"
+  append_pod_lifecycle_status "$AGGREGATE_LOG_FILE"
   append_profile_jsonl "$jsonl_path" "profile_start" "$profile" "$dry_run" "-1" "" "$log_path" "$start_replicas" "$autoscaler_timeline_log"
 
   if [ "$dry_run" -eq 0 ]; then
@@ -661,6 +688,7 @@ run_one() {
     wait "$replica_sampler_pid" 2>/dev/null || true
   fi
   append_autoscaler_diagnostics "$log_path"
+  append_pod_lifecycle_status "$log_path"
   append_aggregate_autoscaler_window "$profile" "$control_log_start_offset" "$log_path"
   printf '%s exit_code=%s\n' "$profile" "$exit_code" >> "$status_file"
   stage_log "profile_end" "profile=${profile} exit_code=${exit_code} summary=${summary_path} log=${log_path}"

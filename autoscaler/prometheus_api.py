@@ -3,7 +3,7 @@
 import time
 import requests
 
-from config import PROMETHEUS_URL
+from config import PROMETHEUS_URL, QUEUE_METRICS_WINDOW
 from models import MetricsSnapshot
 
 
@@ -40,10 +40,10 @@ def build_snapshot(current_replicas: int) -> MetricsSnapshot:
     queue_depth_query = query_scalar('sum(demo_app_queue_depth)')
     queue_wait_p95_query = query_scalar(
         'histogram_quantile(0.95, '
-        'sum(rate(demo_app_queue_wait_seconds_bucket[1m])) by (le))'
+        f'sum(rate(demo_app_queue_wait_seconds_bucket[{QUEUE_METRICS_WINDOW}])) by (le))'
     )
     queue_timeout_rate_query = query_scalar(
-        'sum(rate(demo_app_queue_timeout_total[1m])) '
+        f'sum(rate(demo_app_queue_timeout_total[{QUEUE_METRICS_WINDOW}])) '
         '/ clamp_min(sum(rate(demo_app_requests_total[1m])), 1)'
     )
     per_replica_rps = rps_query / max(current_replicas, 1)
