@@ -14,6 +14,9 @@ from config import (
     LATENCY_ROLLING_WINDOW,
     LATENCY_SCALE_DOWN_MARGIN,
   PER_REPLICA_RPS_THRESHOLD,
+    QUEUE_DEPTH_THRESHOLD,
+    QUEUE_TIMEOUT_RATE_THRESHOLD,
+    QUEUE_WAIT_P95_THRESHOLD,
   SCALE_DOWN_STEP,
   SCALE_UP_STEP
 )
@@ -120,6 +123,24 @@ def throughput_agent(metrics: MetricsSnapshot) -> AgentRecommendation:
 def error_agent(metrics: MetricsSnapshot) -> AgentRecommendation:
     """Agent that makes decisions based on error rate."""
     if metrics.error_rate > ERROR_RATE_THRESHOLD:
+        capacity_signal = (
+            metrics.p95_latency > LATENCY_P95_THRESHOLD
+            or metrics.inprogress > INPROGRESS_THRESHOLD
+            or metrics.queue_depth > QUEUE_DEPTH_THRESHOLD
+            or metrics.queue_wait_p95 > QUEUE_WAIT_P95_THRESHOLD
+            or metrics.queue_timeout_rate > QUEUE_TIMEOUT_RATE_THRESHOLD
+        )
+        if not capacity_signal:
+            return AgentRecommendation(
+                agent_name="error_agent",
+                action="hold",
+                desired_replicas=metrics.current_replicas,
+                confidence=0.85,
+                reason=(
+                    f"error rate {metrics.error_rate:.2%} is high but has no "
+                    "correlated latency or capacity pressure"
+                ),
+            )
         desired_replicas = clamp(metrics.current_replicas + SCALE_UP_STEP)
         return AgentRecommendation(
             agent_name="error_agent",
@@ -158,6 +179,35 @@ def saturation_agent(metrics: MetricsSnapshot) -> AgentRecommendation:
     )
 
 
+def queue_agent(metrics: MetricsSnapshot) -> AgentRecommendation:
+    """Protect capacity when requests are waiting for application workers."""
+    pressure = (
+        metrics.queue_depth > QUEUE_DEPTH_THRESHOLD
+        or metrics.queue_wait_p95 > QUEUE_WAIT_P95_THRESHOLD
+        or metrics.queue_timeout_rate > QUEUE_TIMEOUT_RATE_THRESHOLD
+    )
+    if pressure:
+        desired_replicas = clamp(metrics.current_replicas + SCALE_UP_STEP)
+        return AgentRecommendation(
+            agent_name="queue_agent",
+            action="scale_up",
+            desired_replicas=desired_replicas,
+            confidence=0.95,
+            reason=(
+                f"queue depth {metrics.queue_depth:.2f}, wait p95 "
+                f"{metrics.queue_wait_p95:.3f}s, timeout rate "
+                f"{metrics.queue_timeout_rate:.2%} exceed queue safety limits"
+            ),
+        )
+    return AgentRecommendation(
+        agent_name="queue_agent",
+        action="hold",
+        desired_replicas=metrics.current_replicas,
+        confidence=0.9,
+        reason="queue depth, wait time and timeout rate are within limits",
+    )
+
+
 def needs_ai_coverage(
     metrics: MetricsSnapshot,
     recommendations: list[AgentRecommendation],
@@ -168,6 +218,9 @@ def needs_ai_coverage(
         or metrics.error_rate > ERROR_RATE_THRESHOLD
         or metrics.inprogress > INPROGRESS_THRESHOLD
         or metrics.rps / max(metrics.current_replicas, 1) > PER_REPLICA_RPS_THRESHOLD
+        or metrics.queue_depth > QUEUE_DEPTH_THRESHOLD
+        or metrics.queue_wait_p95 > QUEUE_WAIT_P95_THRESHOLD
+        or metrics.queue_timeout_rate > QUEUE_TIMEOUT_RATE_THRESHOLD
     )
     if hard_pressure:
         return True, "serious SLO or capacity pressure requires AI coverage"
@@ -256,7 +309,8 @@ def run_agents(metrics: MetricsSnapshot, cycle_id: int | None = None) -> list[Ag
         latency_agent(metrics),
         throughput_agent(metrics),
         error_agent(metrics),
-        saturation_agent(metrics)
+        saturation_agent(metrics),
+        queue_agent(metrics),
     ]
 
     for rec in recommendations:

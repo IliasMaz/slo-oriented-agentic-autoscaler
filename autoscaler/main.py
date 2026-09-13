@@ -32,6 +32,7 @@ from channel_logging import (
     log_transition,
 )
 from config import LOG_CYCLE_AGGREGATION, POLL_INTERVAL_SECONDS
+from arbitration import observe_scale_result
 from kubernetes_api import load_cluster_config
 from runner import GraphRunner
 
@@ -79,6 +80,41 @@ AUTOSCALER_OBSERVED_ERROR_RATE = Gauge(
 AUTOSCALER_OBSERVED_INPROGRESS = Gauge(
     "autoscaler_observed_inprogress_requests",
     "Observed in-progress requests",
+)
+
+AUTOSCALER_OBSERVED_PER_REPLICA_RPS = Gauge(
+    "autoscaler_observed_per_replica_rps",
+    "Observed request rate per ready replica",
+)
+
+AUTOSCALER_OBSERVED_QUEUE_PRESSURE = Gauge(
+    "autoscaler_observed_queue_pressure",
+    "Observed in-progress requests per ready replica",
+)
+
+AUTOSCALER_OBSERVED_RPS_TREND = Gauge(
+    "autoscaler_observed_rps_trend",
+    "Change in observed request rate since the previous cycle",
+)
+
+AUTOSCALER_OBSERVED_P95_TREND = Gauge(
+    "autoscaler_observed_p95_trend",
+    "Change in observed p95 latency since the previous cycle",
+)
+
+AUTOSCALER_OBSERVED_QUEUE_DEPTH = Gauge(
+    "autoscaler_observed_queue_depth",
+    "Observed application queue depth",
+)
+
+AUTOSCALER_OBSERVED_QUEUE_WAIT_P95 = Gauge(
+    "autoscaler_observed_queue_wait_p95_seconds",
+    "Observed application queue wait p95",
+)
+
+AUTOSCALER_OBSERVED_QUEUE_TIMEOUT_RATE = Gauge(
+    "autoscaler_observed_queue_timeout_rate",
+    "Observed application queue timeout rate",
 )
 
 
@@ -129,6 +165,11 @@ def control_loop():
 
             snapshot = result["metrics_snapshot"]
             final_decision = result["final_decision"]
+            observe_scale_result(
+                snapshot,
+                final_decision.action,
+                bool(result.get("scaled", False)),
+            )
             current_replicas = result["current_replicas"]
             desired_replicas = final_decision.desired_replicas
             delta = desired_replicas - current_replicas
@@ -152,6 +193,13 @@ def control_loop():
             AUTOSCALER_OBSERVED_P95_LATENCY.set(snapshot.p95_latency)
             AUTOSCALER_OBSERVED_ERROR_RATE.set(snapshot.error_rate)
             AUTOSCALER_OBSERVED_INPROGRESS.set(snapshot.inprogress)
+            AUTOSCALER_OBSERVED_PER_REPLICA_RPS.set(snapshot.per_replica_rps)
+            AUTOSCALER_OBSERVED_QUEUE_PRESSURE.set(snapshot.queue_pressure)
+            AUTOSCALER_OBSERVED_RPS_TREND.set(snapshot.rps_trend)
+            AUTOSCALER_OBSERVED_P95_TREND.set(snapshot.p95_trend)
+            AUTOSCALER_OBSERVED_QUEUE_DEPTH.set(snapshot.queue_depth)
+            AUTOSCALER_OBSERVED_QUEUE_WAIT_P95.set(snapshot.queue_wait_p95)
+            AUTOSCALER_OBSERVED_QUEUE_TIMEOUT_RATE.set(snapshot.queue_timeout_rate)
 
             AUTOSCALER_CURRENT_DESIRED_REPLICAS.set(
                 final_decision.desired_replicas
@@ -178,6 +226,14 @@ def control_loop():
                 p95_latency=snapshot.p95_latency,
                 error_rate=snapshot.error_rate,
                 inprogress=snapshot.inprogress,
+                per_replica_rps=snapshot.per_replica_rps,
+                queue_pressure=snapshot.queue_pressure,
+                rps_trend=snapshot.rps_trend,
+                p95_trend=snapshot.p95_trend,
+                queue_depth=snapshot.queue_depth,
+                queue_wait_p95=snapshot.queue_wait_p95,
+                queue_timeout_rate=snapshot.queue_timeout_rate,
+                queue_trend=snapshot.queue_trend,
             )
             if result.get("scaled", False):
                 log_transition(

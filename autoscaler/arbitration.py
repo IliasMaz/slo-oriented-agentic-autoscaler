@@ -8,17 +8,22 @@ from config import (
     MAX_REPLICAS,
     MIN_REPLICAS,
     PER_REPLICA_RPS_THRESHOLD,
+    QUEUE_DEPTH_THRESHOLD,
+    QUEUE_TIMEOUT_RATE_THRESHOLD,
+    QUEUE_WAIT_P95_THRESHOLD,
     SCALE_DOWN_RELEASE_MARGIN,
     SCALE_DOWN_STEP,
     SCALE_UP_IMMEDIATE_BREACH_RATIO,
     SCALE_UP_PERSISTENCE_CYCLES,
-    SCALE_UP_STEP,
+    SOFT_REPLICA_CEILING,
 )
 from models import ActionScore, AgentRecommendation, ArbitratedDecision, MetricsSnapshot
 
 
 arbitration_log = get_channel_logger("arbitration")
 _scale_up_pressure_streak = 0
+_last_scale_up_snapshot: MetricsSnapshot | None = None
+_ineffective_scale_up_cycles = 0
 
 
 def clamp(value: int) -> int:
@@ -26,10 +31,28 @@ def clamp(value: int) -> int:
     return max(MIN_REPLICAS, min(MAX_REPLICAS, value))
 
 
+def _adaptive_scale_up_step(metrics: MetricsSnapshot) -> int:
+    """Choose a bounded scale-up step from the severity of current pressure."""
+    per_replica_rps = metrics.rps / max(metrics.current_replicas, 1)
+    ratios = (
+        metrics.p95_latency / LATENCY_P95_THRESHOLD,
+        metrics.error_rate / ERROR_RATE_THRESHOLD,
+        metrics.inprogress / INPROGRESS_THRESHOLD,
+        per_replica_rps / PER_REPLICA_RPS_THRESHOLD,
+    )
+    max_ratio = max(ratios)
+    breached_signals = sum(ratio > 1.0 for ratio in ratios)
+    if max_ratio >= SCALE_UP_IMMEDIATE_BREACH_RATIO:
+        return 3
+    if breached_signals >= 2:
+        return 2
+    return 1
+
+
 def desired_replicas_for_action(metrics: MetricsSnapshot, action: str) -> int:
     """Return the one-step target associated with an action."""
     if action == "scale_up":
-        return clamp(metrics.current_replicas + SCALE_UP_STEP)
+        return clamp(metrics.current_replicas + _adaptive_scale_up_step(metrics))
     if action == "scale_down":
         return clamp(metrics.current_replicas - SCALE_DOWN_STEP)
     return metrics.current_replicas
@@ -42,13 +65,64 @@ def _scale_up_pressure(metrics: MetricsSnapshot) -> tuple[list[str], float]:
         "error_rate": metrics.error_rate / ERROR_RATE_THRESHOLD,
         "inprogress": metrics.inprogress / INPROGRESS_THRESHOLD,
         "per_replica_rps": per_replica_rps / PER_REPLICA_RPS_THRESHOLD,
+        "queue_depth": metrics.queue_depth / QUEUE_DEPTH_THRESHOLD,
+        "queue_wait_p95": metrics.queue_wait_p95 / QUEUE_WAIT_P95_THRESHOLD,
+        "queue_timeout_rate": metrics.queue_timeout_rate / QUEUE_TIMEOUT_RATE_THRESHOLD,
     }
     reasons = [
         f"{name} exceeds threshold"
         for name, ratio in ratios.items()
         if ratio > 1.0
     ]
+    capacity_pressure = (
+        metrics.queue_depth > QUEUE_DEPTH_THRESHOLD
+        or metrics.queue_wait_p95 > QUEUE_WAIT_P95_THRESHOLD
+        or metrics.queue_timeout_rate > QUEUE_TIMEOUT_RATE_THRESHOLD
+        or metrics.inprogress > INPROGRESS_THRESHOLD
+        or per_replica_rps > PER_REPLICA_RPS_THRESHOLD
+    )
+    if _ineffective_scale_up_cycles >= 2 and not capacity_pressure:
+        return [], 0.0
+    if metrics.current_replicas >= SOFT_REPLICA_CEILING and not capacity_pressure:
+        return [], 0.0
+    predictive_signals = []
+    if metrics.p95_latency >= LATENCY_P95_THRESHOLD * 0.85 and metrics.p95_trend > 0:
+        predictive_signals.append("rising p95 near latency threshold")
+    if per_replica_rps >= PER_REPLICA_RPS_THRESHOLD * 0.85 and metrics.rps_trend > 0:
+        predictive_signals.append("rising per-replica RPS near capacity threshold")
+    if len(predictive_signals) >= 2:
+        reasons.extend(predictive_signals)
     return reasons, max(ratios.values())
+
+
+def observe_scale_result(
+    metrics: MetricsSnapshot,
+    action: str,
+    scaled: bool,
+) -> None:
+    """Evaluate whether the previous scale-up produced measurable improvement."""
+    global _last_scale_up_snapshot, _ineffective_scale_up_cycles
+    if action == "scale_up" and scaled:
+        _last_scale_up_snapshot = metrics
+        _ineffective_scale_up_cycles = 0
+        return
+    if _last_scale_up_snapshot is None:
+        return
+    baseline = _last_scale_up_snapshot
+    improved = (
+        metrics.p95_latency < baseline.p95_latency * 0.90
+        or metrics.queue_depth < baseline.queue_depth * 0.80
+        or (
+            baseline.queue_depth == 0
+            and metrics.inprogress < baseline.inprogress * 0.80
+        )
+    )
+    healthy = metrics.p95_latency <= LATENCY_P95_THRESHOLD * SCALE_DOWN_RELEASE_MARGIN
+    if improved or healthy:
+        _last_scale_up_snapshot = None
+        _ineffective_scale_up_cycles = 0
+    else:
+        _ineffective_scale_up_cycles += 1
 
 
 def select_deterministic_action(
