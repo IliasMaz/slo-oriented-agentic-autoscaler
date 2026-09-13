@@ -11,6 +11,14 @@ class MetricsSnapshot(BaseModel):
     p95_latency: float
     inprogress: int
     current_replicas: int
+    per_replica_rps: float = 0.0
+    queue_pressure: float = 0.0
+    rps_trend: float = 0.0
+    p95_trend: float = 0.0
+    queue_depth: float = 0.0
+    queue_wait_p95: float = 0.0
+    queue_timeout_rate: float = 0.0
+    queue_trend: float = 0.0
 
 class AgentRecommendation(BaseModel):
     """A recommendation from the autoscaling agent."""
