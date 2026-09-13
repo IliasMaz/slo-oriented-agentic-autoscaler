@@ -56,6 +56,8 @@ spec:
               value: "8"
             - name: PER_REPLICA_RPS_THRESHOLD
               value: "15"
+            - name: QUEUE_METRICS_WINDOW
+              value: "30s"
             - name: SCALE_UP_STEP
               value: "3"
             - name: SCALE_DOWN_STEP
@@ -67,11 +69,11 @@ spec:
             - name: SCALE_UP_COOLDOWN_SECONDS
               value: "5"
             - name: SCALE_DOWN_COOLDOWN_SECONDS
-              value: "20"
+              value: "10"
             - name: MIN_SCALE_ACTION_INTERVAL_SECONDS
               value: "5"
             - name: SCALE_DIRECTION_CHANGE_COOLDOWN_SECONDS
-              value: "30"
+              value: "15"
             - name: SCALE_DOWN_RELEASE_MARGIN
               value: "0.85"
             - name: AUDIT_LOG_PATH

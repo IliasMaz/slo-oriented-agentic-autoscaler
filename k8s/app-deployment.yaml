@@ -78,6 +78,6 @@ spec:
             - name: QUEUE_MODE
               value: "true"
             - name: MAX_CONCURRENT_REQUESTS
-              value: "8"
+              value: "2"
             - name: QUEUE_TIMEOUT_MS
               value: "1000"
