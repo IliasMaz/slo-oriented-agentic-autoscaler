@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 from datetime import datetime
 from pathlib import Path
 
@@ -80,6 +81,26 @@ def _replica_metrics(run_dir: Path, profile: str | None = None) -> dict:
         ),
         "replica_seconds": round(replica_seconds, 2),
     }
+
+
+def _load_timeseries(run_dir: Path) -> list[dict]:
+    samples = []
+    for path in sorted(run_dir.glob("*_replica_samples.jsonl")):
+        for line in path.read_text(encoding="utf-8").splitlines():
+            try:
+                sample = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(sample, dict) or "rps" not in sample:
+                continue
+            try:
+                samples.append({key: float(sample[key]) for key in (
+                    "timestamp_epoch", "current_replicas", "rps", "p95_latency",
+                    "error_rate", "inprogress",
+                )})
+            except (KeyError, TypeError, ValueError):
+                continue
+    return sorted(samples, key=lambda sample: sample["timestamp_epoch"])
 
 
 def _run_metrics(run_dir: Path) -> dict:
@@ -248,6 +269,15 @@ def compare(agentic_dir: Path, hpa_dir: Path) -> dict:
             != hpa_profiles[profile].get("max_vus")
         ):
             issues.append(f"{profile}: maximum VU counts differ.")
+        if "fixed_rate" in profile and (
+            agentic_profiles[profile].get("dropped_iterations", 0) > 0
+            or hpa_profiles[profile].get("dropped_iterations", 0) > 0
+        ):
+            issues.append(
+                f"{profile}: fixed arrival rate was not fully sustained "
+                f"(Agentic dropped={agentic_profiles[profile].get('dropped_iterations', 0)}, "
+                f"HPA dropped={hpa_profiles[profile].get('dropped_iterations', 0)})."
+            )
     profile_comparisons = {}
     for profile in sorted(set(agentic_profiles) | set(hpa_profiles)):
         left = agentic_profiles.get(profile, {})
@@ -331,6 +361,43 @@ def write_figure(result: dict, output: Path) -> bool:
         else "REVIEW: unmatched or unverified experiment conditions"
     )
     figure.suptitle(f"Agentic versus HPA\n{assessment}")
+    figure.tight_layout()
+    figure.savefig(output, dpi=160)
+    plt.close(figure)
+    return True
+
+
+def write_timeseries_figure(agentic_dir: Path, hpa_dir: Path, output: Path) -> bool:
+    agentic = _load_timeseries(agentic_dir)
+    hpa = _load_timeseries(hpa_dir)
+    if not agentic or not hpa:
+        return False
+    try:
+        import matplotlib.pyplot as plt
+    except ImportError:
+        return False
+
+    start = min(agentic[0]["timestamp_epoch"], hpa[0]["timestamp_epoch"])
+    figure, axes = plt.subplots(4, 1, figsize=(12, 11), sharex=True)
+    styles = [(agentic, "Agentic", "#237a57"), (hpa, "HPA", "#b85b37")]
+    for samples, label, color in styles:
+        time_axis = [(sample["timestamp_epoch"] - start) / 60 for sample in samples]
+        axes[0].plot(time_axis, [sample["rps"] for sample in samples], label=label, color=color)
+        axes[1].plot(time_axis, [sample["current_replicas"] for sample in samples], label=label, color=color)
+        axes[2].plot(time_axis, [sample["p95_latency"] * 1000 for sample in samples], label=label, color=color)
+        axes[3].plot(time_axis, [sample["error_rate"] * 100 for sample in samples], label=label, color=color)
+    axes[0].set_title("Observed input: request rate")
+    axes[0].set_ylabel("requests/sec")
+    axes[1].set_title("Observed output: ready replicas")
+    axes[1].set_ylabel("replicas")
+    axes[2].set_title("Observed p95 latency")
+    axes[2].set_ylabel("milliseconds")
+    axes[3].set_title("Observed application error rate")
+    axes[3].set_ylabel("percent")
+    axes[3].set_xlabel("minutes since profile start")
+    for axis in axes:
+        axis.grid(alpha=0.2)
+        axis.legend()
     figure.tight_layout()
     figure.savefig(output, dpi=160)
     plt.close(figure)
@@ -465,6 +532,10 @@ def main() -> None:
     result = compare(args.agentic_run, args.hpa_run)
     figure = args.output_dir / "controller_comparison.png"
     has_figure = write_figure(result, figure)
+    timeseries_figure = args.output_dir / "controller_timeseries.png"
+    has_timeseries = write_timeseries_figure(
+        args.agentic_run, args.hpa_run, timeseries_figure
+    )
     (args.output_dir / "controller_comparison.json").write_text(
         json.dumps(result, indent=2),
         encoding="utf-8",
@@ -473,14 +544,24 @@ def main() -> None:
         markdown(result, figure.name if has_figure else None),
         encoding="utf-8",
     )
-    from generate_ai_insights import append_to_markdown, generate
+    extra_ai_analysis = os.getenv("EXTRA_AI_ANALYSIS", "false").lower() == "true"
+    if extra_ai_analysis:
+        from generate_ai_insights import append_to_markdown, generate
 
-    analysis = generate(result)
-    (args.output_dir / "controller_comparison_analysis.json").write_text(
-        json.dumps(analysis, indent=2),
-        encoding="utf-8",
-    )
-    append_to_markdown(args.output_dir / "controller_comparison.md", analysis)
+        analysis = generate(result)
+        (args.output_dir / "controller_comparison_analysis.json").write_text(
+            json.dumps(analysis, indent=2),
+            encoding="utf-8",
+        )
+        append_to_markdown(args.output_dir / "controller_comparison.md", analysis)
+    if has_timeseries:
+        report_path = args.output_dir / "controller_comparison.md"
+        report = report_path.read_text(encoding="utf-8")
+        report += "\n## Controller timeline\n\n"
+        report += "The line plot shows the shared observed input/output path over time. "
+        report += "Solid lines are the metric; dashed lines in the first panel are ready replicas.\n\n"
+        report += "![Controller timeline](controller_timeseries.png)\n"
+        report_path.write_text(report, encoding="utf-8")
     print(f"Wrote controller comparison to {args.output_dir}")
 
 

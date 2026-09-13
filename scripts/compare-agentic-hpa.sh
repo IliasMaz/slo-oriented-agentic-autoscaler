@@ -2,6 +2,7 @@
 set -euo pipefail
 
 PROFILE="${1:-spike}"
+export EXPECT_AUTOSCALER_READY=1
 COMPARISON_ID="$(date +%Y%m%d_%H%M%S)"
 COMPARISON_DIR="storage/runs/controller_comparisons/${COMPARISON_ID}"
 AGENTIC_ROOT="${COMPARISON_DIR}/agentic"
@@ -37,7 +38,7 @@ configure_workload() {
     queueing_slo|fixed_rate_slo)
       kubectl set env deployment/demo-app -n thesis-autoscaling \
         BASE_DELAY_MS=5 SPIKE_DELAY_MS=5 SPIKE_PROBABILITY=0 \
-        ERROR_PROBABILITY=0 CPU_BURN_ITERS=0 >/dev/null
+        ERROR_PROBABILITY=0.02 CPU_BURN_ITERS=0 >/dev/null
       ;;
     sawtooth|slo_burst)
       kubectl set env deployment/demo-app -n thesis-autoscaling \
@@ -49,6 +50,16 @@ configure_workload() {
       exit 1
       ;;
   esac
+}
+
+capture_comparison_metadata() {
+  local controller="$1"
+  kubectl get deployment demo-app -n thesis-autoscaling -o json \
+    > "${COMPARISON_DIR}/${controller}_demo_app_deployment.json"
+  kubectl get hpa demo-app-hpa -n thesis-autoscaling -o json \
+    > "${COMPARISON_DIR}/${controller}_hpa.json" 2>/dev/null || true
+  kubectl get deployment agent-autoscaler -n thesis-autoscaling -o json \
+    > "${COMPARISON_DIR}/${controller}_agent_autoscaler.json" 2>/dev/null || true
 }
 
 if [ "$PROFILE" = "all" ]; then
@@ -94,6 +105,7 @@ kubectl delete hpa demo-app-hpa -n thesis-autoscaling --ignore-not-found >/dev/n
 ./scripts/deploy-proposed.sh
 AGENTIC_READY=1
 configure_workload
+capture_comparison_metadata agentic
 
 kubectl scale deployment/agent-autoscaler -n thesis-autoscaling --replicas=0
 kubectl wait --for=delete pod -l app=agent-autoscaler -n thesis-autoscaling --timeout=180s
@@ -111,10 +123,12 @@ fi
 
 echo "Switching to Kubernetes HPA..."
 kubectl delete deployment agent-autoscaler -n thesis-autoscaling
+export EXPECT_AUTOSCALER_READY=0
 kubectl wait --for=delete pod -l app=agent-autoscaler -n thesis-autoscaling --timeout=180s
 reset_app_baseline
 kubectl apply -f k8s/hpa.yaml
 kubectl rollout status deployment/demo-app -n thesis-autoscaling --timeout=180s
+capture_comparison_metadata hpa
 
 # HPA needs metrics-server to expose CPU metrics before the workload starts.
 kubectl get --raw "/apis/metrics.k8s.io/v1beta1/nodes" >/dev/null

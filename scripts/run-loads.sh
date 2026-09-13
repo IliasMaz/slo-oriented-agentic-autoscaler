@@ -6,6 +6,13 @@ AGGREGATE_LOG_FILE=""
 
 capture_replica_samples() {
   local output_path="$1"
+  prom_scalar() {
+    local query="$1"
+    curl -fsS --get --max-time 3 \
+      --data-urlencode "query=${query}" \
+      http://localhost:9090/api/v1/query 2>/dev/null \
+      | jq -r '.data.result[0].value[1] // "0"' 2>/dev/null || echo "0"
+  }
   while true; do
     local snapshot
     snapshot="$(kubectl get deployment demo-app -n thesis-autoscaling \
@@ -14,8 +21,22 @@ capture_replica_samples() {
       local desired current
       desired="${snapshot%,*}"
       current="${snapshot#*,}"
-      printf '{"timestamp_epoch":%s,"desired_replicas":%s,"current_replicas":%s}\n' \
-        "$(date +%s)" "${desired:-0}" "${current:-0}" >> "$output_path"
+      local timestamp rps p95 error_rate inprogress
+      timestamp="$(date +%s)"
+      rps="$(prom_scalar 'sum(rate(demo_app_requests_total[1m]))')"
+      p95="$(prom_scalar 'histogram_quantile(0.95, sum(rate(demo_app_request_latency_seconds_bucket[1m])) by (le))')"
+      error_rate="$(prom_scalar 'sum(rate(demo_app_requests_total{status_code=~"5.."}[1m])) / clamp_min(sum(rate(demo_app_requests_total[1m])), 1)')"
+      inprogress="$(prom_scalar 'sum(demo_app_inprogress_requests)')"
+      jq -cn \
+        --argjson timestamp "${timestamp:-0}" \
+        --argjson desired "${desired:-0}" \
+        --argjson current "${current:-0}" \
+        --argjson rps "${rps:-0}" \
+        --argjson p95 "${p95:-0}" \
+        --argjson error_rate "${error_rate:-0}" \
+        --argjson inprogress "${inprogress:-0}" \
+        '{timestamp_epoch:$timestamp,desired_replicas:$desired,current_replicas:$current,rps:$rps,p95_latency:$p95,error_rate:$error_rate,inprogress:$inprogress}' \
+        >> "$output_path"
     fi
     sleep 5
   done
@@ -187,16 +208,19 @@ append_system_health_status() {
   auto_ready="$(kubectl get deploy agent-autoscaler -n thesis-autoscaling -o jsonpath='{.status.readyReplicas}' 2>/dev/null || echo "")"
   auto_spec="$(kubectl get deploy agent-autoscaler -n thesis-autoscaling -o jsonpath='{.spec.replicas}' 2>/dev/null || echo "")"
 
-  if [ -z "$app_spec" ] || [ -z "$auto_spec" ]; then
+  if [ -z "$app_spec" ] || { [ "${EXPECT_AUTOSCALER_READY:-1}" = "1" ] && [ -z "$auto_spec" ]; }; then
     status="SYSTEM_ERROR"
     reason="deployment_query_failed"
-  elif [ "${app_ready:-0}" -lt "${app_spec:-0}" ] || [ "${auto_ready:-0}" -lt "${auto_spec:-0}" ]; then
+  elif [ "${app_ready:-0}" -lt "${app_spec:-0}" ] || { [ "${EXPECT_AUTOSCALER_READY:-1}" = "1" ] && [ "${auto_ready:-0}" -lt "${auto_spec:-0}" ]; }; then
     status="SYSTEM_ERROR"
     reason="deployment_not_ready"
   fi
 
   local recent_errors
-  recent_errors="$(kubectl logs deployment/agent-autoscaler -n thesis-autoscaling -c agent-autoscaler --since=5m 2>/dev/null | grep -E 'cycle_error|exception:control_loop|Cycle failed|Traceback' | tail -n 20 || true)"
+  recent_errors=""
+  if [ "${EXPECT_AUTOSCALER_READY:-1}" = "1" ]; then
+    recent_errors="$(kubectl logs deployment/agent-autoscaler -n thesis-autoscaling -c agent-autoscaler --since=5m 2>/dev/null | grep -E 'cycle_error|exception:control_loop|Cycle failed|Traceback' | tail -n 20 || true)"
+  fi
   if [ -n "$recent_errors" ]; then
     status="SYSTEM_ERROR"
     reason="autoscaler_runtime_errors"
