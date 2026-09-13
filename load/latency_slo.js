@@ -6,11 +6,11 @@ import { sleep } from "k6";
 // an SLO-aware controller from a CPU-only HPA signal.
 export const options = {
   stages: [
-    { duration: "45s", target: 30 },
-    { duration: "30s", target: 240 },
+    { duration: "1m", target: 30 },
     { duration: "2m", target: 240 },
-    { duration: "45s", target: 30 },
-    { duration: "45s", target: 30 },
+    { duration: "9m", target: 240 },
+    { duration: "2m", target: 30 },
+    { duration: "1m", target: 30 },
   ],
 };
 
