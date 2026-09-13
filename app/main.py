@@ -2,10 +2,11 @@
 
 import os
 import random
+import threading
 import time
 
 from fastapi import FastAPI, Response, status
-from prometheus_client import CONTENT_TYPE_LATEST, Counter, Gauge , Histogram, generate_latest
+from prometheus_client import CONTENT_TYPE_LATEST, Counter, Gauge, Histogram, generate_latest
 
 app = FastAPI()
 
@@ -39,6 +40,28 @@ SIMULATED_LATENCY_MODE = Gauge(
     "Whether a latency spike was simulated for the last request"
 )
 
+QUEUE_DEPTH = Gauge(
+    "demo_app_queue_depth",
+    "Requests waiting for an application worker",
+)
+
+QUEUE_WAIT_SECONDS = Histogram(
+    "demo_app_queue_wait_seconds",
+    "Time spent waiting for an application worker",
+    buckets=[0.001, 0.01, 0.05, 0.1, 0.25, 0.5, 1, 2, 5],
+)
+
+QUEUE_TIMEOUT_TOTAL = Counter(
+    "demo_app_queue_timeout_total",
+    "Requests rejected after waiting too long for an application worker",
+)
+
+PROCESSING_SECONDS = Histogram(
+    "demo_app_processing_seconds",
+    "Application processing time after queue wait",
+    buckets=[0.01, 0.025, 0.05, 0.1, 0.2, 0.5, 1, 2, 5],
+)
+
 # Environment variable configuration
 
 def env_int(name: str, default: int) -> int:
@@ -68,6 +91,10 @@ SPIKE_DELAY_MS = env_int("SPIKE_DELAY_MS", 800)
 SPIKE_PROBABILITY = env_float("SPIKE_PROBABILITY", 0.10)
 ERROR_PROBABILITY = env_float("ERROR_PROBABILITY", 0.03)
 CPU_BURN_ITERS = env_int("CPU_BURN_ITERS", 0)
+QUEUE_MODE = os.getenv("QUEUE_MODE", "false").lower() == "true"
+MAX_CONCURRENT_REQUESTS = max(1, env_int("MAX_CONCURRENT_REQUESTS", 8))
+QUEUE_TIMEOUT_MS = max(1, env_int("QUEUE_TIMEOUT_MS", 1000))
+QUEUE_WORKER_LIMIT = threading.BoundedSemaphore(MAX_CONCURRENT_REQUESTS)
 
 # Simulated CPU burn function
 
@@ -100,8 +127,35 @@ def root():
 
     INPROGRESS_REQUESTS.inc()
     start = time.perf_counter()
+    queue_started = time.perf_counter()
+    queued = False
 
     try:
+        if QUEUE_MODE:
+            QUEUE_DEPTH.inc()
+            queued = True
+            acquired = QUEUE_WORKER_LIMIT.acquire(timeout=QUEUE_TIMEOUT_MS / 1000)
+            queue_wait = time.perf_counter() - queue_started
+            QUEUE_DEPTH.dec()
+            queued = False
+            QUEUE_WAIT_SECONDS.observe(queue_wait)
+            if not acquired:
+                QUEUE_TIMEOUT_TOTAL.inc()
+                REQUEST_TOTAL.labels(
+                    method=method,
+                    endpoint=endpoint,
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                ).inc()
+                REQUEST_LATENCY_SECONDS.labels(
+                    method=method,
+                    endpoint=endpoint,
+                ).observe(time.perf_counter() - start)
+                return Response(
+                    content="Queue timeout",
+                    media_type="application/json",
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                )
+
         latency_spike = random.random() < SPIKE_PROBABILITY
         should_fail = random.random() < ERROR_PROBABILITY
 
@@ -116,7 +170,9 @@ def root():
         if CPU_BURN_ITERS > 0:
             cpu_burn(CPU_BURN_ITERS)
 
+        processing_started = time.perf_counter()
         time.sleep(delay_ms / 1000.0)
+        PROCESSING_SECONDS.observe(time.perf_counter() - processing_started)
 
         if should_fail:
             REQUEST_TOTAL.labels(
@@ -146,6 +202,10 @@ def root():
         return {"message": "ok", "delay_ms": delay_ms}
 
     finally:
+        if queued:
+            QUEUE_DEPTH.dec()
+        if QUEUE_MODE and 'acquired' in locals() and acquired:
+            QUEUE_WORKER_LIMIT.release()
         INPROGRESS_REQUESTS.dec()
 
 # Prometheus metrics endpoint
