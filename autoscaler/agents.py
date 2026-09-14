@@ -25,7 +25,7 @@ from channel_logging import get_channel_logger, log_event
 from models import MetricsSnapshot, AgentRecommendation
 from ai_agent import ai_decision_agent
 from arbitration import get_allowed_actions
-from policy import assess_pressure, capacity_pressure, per_replica_rps
+from policy import active_queue_wait, assess_pressure, capacity_pressure, per_replica_rps
 
 
 agents_log = get_channel_logger("agents")
@@ -178,7 +178,7 @@ def queue_agent(metrics: MetricsSnapshot) -> AgentRecommendation:
     """Protect capacity when requests are waiting for application workers."""
     pressure = (
         metrics.queue_depth > QUEUE_DEPTH_THRESHOLD
-        or metrics.queue_wait_p95 > QUEUE_WAIT_P95_THRESHOLD
+        or active_queue_wait(metrics)
         or metrics.queue_timeout_rate > QUEUE_TIMEOUT_RATE_THRESHOLD
     )
     if pressure:
