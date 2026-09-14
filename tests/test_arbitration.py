@@ -82,6 +82,40 @@ class ArbitrationScaleUpTest(unittest.TestCase):
 
         self.assertEqual(decision.action, "scale_down")
 
+    def test_stale_wait_does_not_trigger_soft_ceiling_scale_up(self):
+        metrics = MetricsSnapshot(
+            timestamp_epoch=0.0,
+            rps=20.0,
+            error_rate=0.0,
+            p95_latency=0.45,
+            inprogress=0,
+            queue_depth=0,
+            queue_wait_p95=0.40,
+            queue_timeout_rate=0.0,
+            current_replicas=12,
+        )
+
+        decision = arbitration.arbitrate(metrics, [], cycle_id=100)
+
+        self.assertEqual(decision.action, "hold")
+
+    def test_shallow_active_queue_wait_does_not_breach_soft_ceiling(self):
+        metrics = MetricsSnapshot(
+            timestamp_epoch=0.0,
+            rps=20.0,
+            error_rate=0.0,
+            p95_latency=0.45,
+            inprogress=0,
+            queue_depth=5,
+            queue_wait_p95=0.20,
+            queue_timeout_rate=0.0,
+            current_replicas=12,
+        )
+
+        decision = arbitration.arbitrate(metrics, [], cycle_id=100)
+
+        self.assertEqual(decision.action, "hold")
+
     def test_active_queue_still_blocks_release(self):
         metrics = MetricsSnapshot(
             timestamp_epoch=0.0,
@@ -89,7 +123,7 @@ class ArbitrationScaleUpTest(unittest.TestCase):
             error_rate=0.0,
             p95_latency=0.10,
             inprogress=0,
-            queue_depth=5,
+            queue_depth=9,
             queue_wait_p95=0.40,
             queue_timeout_rate=0.0,
             current_replicas=12,

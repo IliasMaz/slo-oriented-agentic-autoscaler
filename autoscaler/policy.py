@@ -33,20 +33,20 @@ def per_replica_rps(metrics: MetricsSnapshot) -> float:
     return metrics.rps / max(metrics.current_replicas, 1)
 
 
-def capacity_pressure(metrics: MetricsSnapshot) -> bool:
-    active_queue_wait = (
-        metrics.queue_wait_p95 > QUEUE_WAIT_P95_THRESHOLD
-        and (
-            metrics.queue_depth > 0
-            or metrics.queue_timeout_rate > QUEUE_TIMEOUT_RATE_THRESHOLD
-        )
+def active_queue_wait(metrics: MetricsSnapshot) -> bool:
+    return metrics.queue_wait_p95 > QUEUE_WAIT_P95_THRESHOLD and (
+        metrics.queue_depth > 0
+        or metrics.queue_timeout_rate > QUEUE_TIMEOUT_RATE_THRESHOLD
     )
+
+
+def capacity_pressure(metrics: MetricsSnapshot) -> bool:
     return any(
         (
             metrics.p95_latency > LATENCY_P95_THRESHOLD,
             metrics.inprogress > INPROGRESS_THRESHOLD,
             metrics.queue_depth > QUEUE_DEPTH_THRESHOLD,
-            active_queue_wait,
+            active_queue_wait(metrics),
             metrics.queue_timeout_rate > QUEUE_TIMEOUT_RATE_THRESHOLD,
         )
     )
@@ -57,7 +57,9 @@ def strong_pressure_above_soft_ceiling(metrics: MetricsSnapshot) -> bool:
     return any(
         (
             metrics.queue_depth >= QUEUE_DEPTH_THRESHOLD * 2,
-            metrics.queue_wait_p95 >= QUEUE_WAIT_P95_THRESHOLD * 1.5,
+            active_queue_wait(metrics)
+            and metrics.queue_depth >= QUEUE_DEPTH_THRESHOLD * 2
+            and metrics.queue_wait_p95 >= QUEUE_WAIT_P95_THRESHOLD * 1.5,
             metrics.queue_timeout_rate > QUEUE_TIMEOUT_RATE_THRESHOLD,
             metrics.p95_latency >= LATENCY_P95_THRESHOLD * SCALE_UP_IMMEDIATE_BREACH_RATIO,
         )
