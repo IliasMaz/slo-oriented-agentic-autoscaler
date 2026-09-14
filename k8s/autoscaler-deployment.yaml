@@ -58,6 +58,8 @@ spec:
               value: "15"
             - name: QUEUE_METRICS_WINDOW
               value: "30s"
+            - name: LATENCY_METRICS_WINDOW
+              value: "30s"
             - name: SCALE_UP_STEP
               value: "3"
             - name: SCALE_DOWN_STEP
