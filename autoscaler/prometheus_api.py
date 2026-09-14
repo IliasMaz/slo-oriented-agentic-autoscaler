@@ -3,7 +3,7 @@
 import time
 import requests
 
-from config import PROMETHEUS_URL, QUEUE_METRICS_WINDOW
+from config import LATENCY_METRICS_WINDOW, PROMETHEUS_URL, QUEUE_METRICS_WINDOW
 from models import MetricsSnapshot
 
 
@@ -34,7 +34,7 @@ def build_snapshot(current_replicas: int) -> MetricsSnapshot:
     )
     p95_latency_query = query_scalar(
         'histogram_quantile(0.95, '
-        'sum(rate(demo_app_request_latency_seconds_bucket[1m])) by (le))'
+        f'sum(rate(demo_app_request_latency_seconds_bucket[{LATENCY_METRICS_WINDOW}])) by (le))'
     )
     inprogress_query = int(query_scalar('sum(demo_app_inprogress_requests)'))
     queue_depth_query = query_scalar('sum(demo_app_queue_depth)')

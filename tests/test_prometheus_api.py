@@ -26,6 +26,7 @@ class PrometheusMetricQueriesTest(unittest.TestCase):
         self.assertIn("status_code=~\"5..\"", queries[1])
         self.assertIn("clamp_min", queries[1])
         self.assertIn("demo_app_request_latency_seconds_bucket", queries[2])
+        self.assertIn("[30s]", queries[2])
         self.assertIn("demo_app_inprogress_requests", queries[3])
         self.assertNotIn("request_duration_seconds", queries[2])
         self.assertNotIn("requests_in_progress", queries[3])
