@@ -11,7 +11,7 @@ react too late, use the wrong signal or waste replicas.
 
 This project implements an application-aware Agentic autoscaler. Every control cycle
 reads latency, error rate, throughput and in-progress requests, then combines
-four deterministic agents, an optional AI advisory agent, explicit action
+six deterministic agents, an optional AI advisory agent, explicit action
 constraints and a final safety gate before changing replicas.
 
 The deterministic policy provides repeatable, auditable decisions. The AI agent
@@ -61,10 +61,11 @@ the same workload and starting conditions.
 
 ## Setup
 
+Run these commands from the repository root:
+
 ```bash
-cd /Users/liakooras/Desktop/slo-oriented-agenic-autoscaler
 source .venv/bin/activate
-python3 -m pip install -r analysis/requirements.txt
+python -m pip install -r analysis/requirements.txt
 cp .env.example .env
 ```
 
@@ -177,20 +178,59 @@ throughput and replica cost separately.
 
 ## Current Policy
 
-Four deterministic agents always run: latency, throughput, error rate and
-saturation. A scale-up pressure signal is normalized as:
+The runtime policy is implemented in the actual controller code, not only in the
+documentation. The main logic lives in `autoscaler/policy.py`,
+`autoscaler/arbitration.py`, and `autoscaler/safety.py`.
+
+The deterministic layer has six specialist agents: latency, throughput,
+error-rate, saturation, queue, and capacity. The shared pressure classifier
+computes normalized ratios against the configured thresholds:
 
 ```text
 pressure_ratio = signal / threshold
 ```
 
-AI is called when there is serious pressure, deterministic disagreement, or at
-least two rolling signal averages are in `[AI_COVERAGE_THRESHOLD, 1.0)`.
-Ordinary pressure must persist for `SCALE_UP_PERSISTENCE_CYCLES` cycles.
-A severe pressure ratio at or above `SCALE_UP_IMMEDIATE_BREACH_RATIO` acts
-immediately. Hard constraints and SafetyGate always control the final action.
+The current thresholds are defined in `autoscaler/config.py` as:
 
-There is no weighted score and no majority-vote decision in the runtime.
+- `LATENCY_P95_THRESHOLD = 0.4s`
+- `ERROR_RATE_THRESHOLD = 0.05`
+- `INPROGRESS_THRESHOLD = 8`
+- `PER_REPLICA_RPS_THRESHOLD = 10.0`
+- `QUEUE_DEPTH_THRESHOLD = 4.0`
+- `QUEUE_WAIT_P95_THRESHOLD = 0.10s`
+- `QUEUE_TIMEOUT_RATE_THRESHOLD = 0.01`
+
+`assess_pressure()` treats pressure as correlated when latency, queue depth,
+in-progress requests, queue wait, or timeout rate exceed their limits. It also
+tests whether the service is close to a release condition before allowing a
+scale-down action. `adaptive_scale_up_step()` raises the step size when the
+signal is severe and uses a persistence rule before a normal scale-up is allowed.
+
+Arbitration then derives the allowed-action set with `get_allowed_actions()`. The
+controller does not do a weighted vote. It first computes the deterministic
+policy decision, then allows AI review only when the action space is still
+ambiguous and the AI recommendation is within that allowed set.
+
+The SafetyGate is the final veto layer. It enforces:
+
+- scale-up and scale-down cooldowns;
+- minimum time between scaling actions;
+- opposite-direction change protection;
+- high-latency and high-error blocking during scale-down;
+- scale-down hysteresis and replica bounds.
+
+The default controller values are configured as:
+
+- `SCALE_UP_PERSISTENCE_CYCLES = 2`
+- `SCALE_UP_IMMEDIATE_BREACH_RATIO = 1.25`
+- `SCALE_UP_COOLDOWN_SECONDS = 30`
+- `SCALE_DOWN_COOLDOWN_SECONDS = 60`
+- `MIN_SCALE_ACTION_INTERVAL_SECONDS = 20`
+- `SCALE_DIRECTION_CHANGE_COOLDOWN_SECONDS = 15`
+- `SCALE_DOWN_RELEASE_MARGIN = 0.85`
+
+This is the actual runtime policy. The AI layer is bounded and does not bypass
+the deterministic policy or the final safety gate.
 
 ## Troubleshooting
 
